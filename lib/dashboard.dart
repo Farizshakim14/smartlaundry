@@ -158,6 +158,10 @@ class _DashboardPageState extends State<DashboardPage> {
           .map((d) => {'id': d.id, 'name': (d.data() as Map<String, dynamic>)['name']})
           .toList();
       
+      if (_userRole == 'Superadmin' || _userRole == 'Admin') {
+        newStores.insert(0, {'id': 'ALL', 'name': 'Semua Toko'});
+      }
+      
       if (mounted) {
         setState(() {
           _myStores = newStores;
@@ -599,6 +603,10 @@ class HomeTab extends StatelessWidget {
   }
 
   Widget _buildSubscriptionCards(BuildContext context) {
+    if (selectedStoreId == 'ALL') {
+      return const SizedBox.shrink(); // Hide tokens for 'Semua Toko'
+    }
+
     return StreamBuilder<QuerySnapshot>(
       stream: selectedStoreId != null 
           ? FirebaseFirestore.instance.collection('stores').doc(selectedStoreId).collection('token_batches').where('remaining_tokens', isGreaterThan: 0).snapshots()
@@ -849,7 +857,7 @@ class HomeTab extends StatelessWidget {
 
   Widget _buildStatusCards() {
     Query query = FirebaseFirestore.instance.collection('machines');
-    if (selectedStoreId != null) {
+    if (selectedStoreId != null && selectedStoreId != 'ALL') {
       query = query.where('store_id', isEqualTo: selectedStoreId);
     }
 
@@ -997,7 +1005,7 @@ class HomeTab extends StatelessWidget {
 
   Widget _buildMachineList() {
     Query query = FirebaseFirestore.instance.collection('machines');
-    if (selectedStoreId != null) {
+    if (selectedStoreId != null && selectedStoreId != 'ALL') {
       query = query.where('store_id', isEqualTo: selectedStoreId);
     }
 
