@@ -603,14 +603,17 @@ class HomeTab extends StatelessWidget {
   }
 
   Widget _buildSubscriptionCards(BuildContext context) {
+    Stream<QuerySnapshot>? tokenStream;
     if (selectedStoreId == 'ALL') {
-      return const SizedBox.shrink(); // Hide tokens for 'Semua Toko'
+      tokenStream = FirebaseFirestore.instance.collectionGroup('token_batches').where('remaining_tokens', isGreaterThan: 0).snapshots();
+    } else if (selectedStoreId != null) {
+      tokenStream = FirebaseFirestore.instance.collection('stores').doc(selectedStoreId).collection('token_batches').where('remaining_tokens', isGreaterThan: 0).snapshots();
+    } else {
+      return const SizedBox.shrink();
     }
 
     return StreamBuilder<QuerySnapshot>(
-      stream: selectedStoreId != null 
-          ? FirebaseFirestore.instance.collection('stores').doc(selectedStoreId).collection('token_batches').where('remaining_tokens', isGreaterThan: 0).snapshots()
-          : null,
+      stream: tokenStream,
       builder: (context, snapshot) {
         int tokenBalance = 0;
         List<Map<String, dynamic>> activeBatches = [];
@@ -633,6 +636,7 @@ class HomeTab extends StatelessWidget {
                tokenBalance += remaining;
                data['id'] = doc.id;
                data['expired_date'] = expiredAt;
+               data['store_id'] = doc.reference.parent.parent?.id;
                activeBatches.add(data);
              }
            }
@@ -661,13 +665,16 @@ class HomeTab extends StatelessWidget {
                     ),
                   );
                 },
-                child: AnimatedTokenCard(tokenBalance: tokenBalance),
+                child: AnimatedTokenCard(
+                  tokenBalance: tokenBalance,
+                  title: selectedStoreId == 'ALL' ? "Total Token Sistem" : "Sisa Token",
+                ),
               ),
               const SizedBox(width: 16),
               GestureDetector(
                 onTap: () {
                   if (activeBatches.isNotEmpty) {
-                    _showTokenBatchesSheet(context, activeBatches);
+                    _showTokenBatchesSheet(context, activeBatches, showStoreId: selectedStoreId == 'ALL');
                   } else {
                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Tidak ada paket token aktif.")));
                   }
@@ -720,7 +727,7 @@ class HomeTab extends StatelessWidget {
     );
   }
 
-  void _showTokenBatchesSheet(BuildContext context, List<Map<String, dynamic>> batches) {
+  void _showTokenBatchesSheet(BuildContext context, List<Map<String, dynamic>> batches, {bool showStoreId = false}) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     showModalBottomSheet(
       context: context,
@@ -744,6 +751,10 @@ class HomeTab extends StatelessWidget {
                   stream: Stream.periodic(const Duration(seconds: 1)),
                   builder: (context, _) {
                     String subtitle = "Lifetime";
+                    if (showStoreId && b['store_id'] != null) {
+                      subtitle = "Toko ID: ${b['store_id']} • $subtitle";
+                    }
+
                     if (expiredDate != null) {
                       final diff = expiredDate.difference(DateTime.now());
                       if (diff.inDays > 0) {
@@ -753,6 +764,9 @@ class HomeTab extends StatelessWidget {
                         final minutes = diff.inMinutes.remainder(60).toString().padLeft(2, '0');
                         final seconds = diff.inSeconds.remainder(60).toString().padLeft(2, '0');
                         subtitle = "Sisa $hours:$minutes:$seconds (Hingga Pukul ${expiredDate.hour.toString().padLeft(2, '0')}:${expiredDate.minute.toString().padLeft(2, '0')})";
+                      }
+                      if (showStoreId && b['store_id'] != null) {
+                        subtitle = "Toko ID: ${b['store_id']} • $subtitle";
                       }
                     }
 
@@ -1243,8 +1257,9 @@ class _LiveMachineItemState extends State<LiveMachineItem> with SingleTickerProv
 
 class AnimatedTokenCard extends StatefulWidget {
   final int tokenBalance;
+  final String title;
 
-  const AnimatedTokenCard({super.key, required this.tokenBalance});
+  const AnimatedTokenCard({super.key, required this.tokenBalance, this.title = "Sisa Token"});
 
   @override
   State<AnimatedTokenCard> createState() => _AnimatedTokenCardState();
@@ -1350,8 +1365,8 @@ class _AnimatedTokenCardState extends State<AnimatedTokenCard> with SingleTicker
                 ),
               ),
               const SizedBox(height: 4),
-              const Text(
-                "Sisa Token",
+              Text(
+                widget.title,
                 style: TextStyle(
                   color: Color(0xFF64748B),
                   fontSize: 13,
