@@ -10,6 +10,7 @@ import 'package:aplikasilaundry/activity_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:aplikasilaundry/token_management.dart';
 import 'package:aplikasilaundry/store_management.dart';
+import 'package:aplikasilaundry/customer_mode.dart';
 import 'package:audioplayers/audioplayers.dart';
 
 class DashboardPage extends StatefulWidget {
@@ -22,19 +23,22 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   int _selectedIndex = 0;
   String? _userRole;
+  String? _userName;
   String? _selectedStoreId;
   List<Map<String, dynamic>> _myStores = [];
   bool _isLoading = true;
   Timer? _autoStopTimer;
   
   StreamSubscription<QuerySnapshot>? _notificationSubscription;
+  StreamSubscription<QuerySnapshot>? _userSubscription;
+  StreamSubscription<QuerySnapshot>? _storeSubscription;
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isInitialNotificationLoad = true;
 
   @override
   void initState() {
     super.initState();
-    _fetchUserContext();
+    _setupUserAndStoreListeners();
     _autoStopTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
       _checkAndAutoStopMachines();
     });
@@ -44,6 +48,8 @@ class _DashboardPageState extends State<DashboardPage> {
   void dispose() {
     _autoStopTimer?.cancel();
     _notificationSubscription?.cancel();
+    _userSubscription?.cancel();
+    _storeSubscription?.cancel();
     _audioPlayer.dispose();
     super.dispose();
   }
@@ -88,47 +94,86 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
-  Future<void> _fetchUserContext() async {
+  void _setupUserAndStoreListeners() {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       if (mounted) setState(() => _isLoading = false);
       return;
     }
 
-    String role = 'Unknown';
-    String? storeId;
-
     if (user.email == 'farizshakim.14@gmail.com') {
-      role = 'Superadmin';
+      _userRole = 'Superadmin';
+      _setupStoreListener();
     } else {
-      final userDoc = await FirebaseFirestore.instance.collection('users').where('email', isEqualTo: user.email).limit(1).get();
-      if (userDoc.docs.isNotEmpty) {
-        final data = userDoc.docs.first.data();
-        role = data['role']?.toString() ?? 'Unknown';
-        storeId = data['store_id']?.toString();
-      }
+      _userSubscription?.cancel();
+      _userSubscription = FirebaseFirestore.instance
+          .collection('users')
+          .where('email', isEqualTo: user.email)
+          .limit(1)
+          .snapshots()
+          .listen((userDoc) {
+        if (userDoc.docs.isNotEmpty) {
+          final data = userDoc.docs.first.data();
+          final newRole = data['role']?.toString() ?? 'Unknown';
+          final newStoreId = data['store_id']?.toString();
+          final newName = data['name']?.toString();
+          
+          bool roleChanged = _userRole != newRole;
+          _userRole = newRole;
+          if (newName != null && newName.isNotEmpty) {
+            _userName = newName;
+          }
+
+          if (_userRole == 'Cashier') {
+            _selectedStoreId = newStoreId;
+            _myStores = [];
+            _storeSubscription?.cancel();
+            if (mounted) {
+              setState(() => _isLoading = false);
+              if (roleChanged) _setupNotificationListener();
+            }
+          } else {
+            // Need to fetch stores if role is Owner/Admin/Superadmin
+            _setupStoreListener();
+          }
+        } else {
+          if (mounted) setState(() => _isLoading = false);
+        }
+      });
+    }
+  }
+
+  void _setupStoreListener() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    Query storesQuery = FirebaseFirestore.instance.collection('stores');
+    if (_userRole == 'Owner' || (_userRole != 'Superadmin' && _userRole != 'Admin' && _userRole != 'Cashier')) {
+      storesQuery = storesQuery.where('owner_email', isEqualTo: user.email);
     }
 
-    _userRole = role;
-
-    if (role != 'Cashier') {
-      Query storesQuery = FirebaseFirestore.instance.collection('stores');
-      if (role == 'Owner') {
-        storesQuery = storesQuery.where('owner_email', isEqualTo: user.email);
-      }
-      final storesSnap = await storesQuery.get();
-      _myStores = storesSnap.docs.map((d) => {'id': d.id, 'name': (d.data() as Map<String, dynamic>)['name']}).toList();
+    _storeSubscription?.cancel();
+    _storeSubscription = storesQuery.snapshots().listen((storesSnap) {
+      final newStores = storesSnap.docs
+          .map((d) => {'id': d.id, 'name': (d.data() as Map<String, dynamic>)['name']})
+          .toList();
       
-      if (_myStores.isNotEmpty) {
-        _selectedStoreId = _myStores.first['id'];
+      if (mounted) {
+        setState(() {
+          _myStores = newStores;
+          // Check if selectedStoreId is still valid
+          if (_myStores.isNotEmpty) {
+            if (_selectedStoreId == null || !_myStores.any((s) => s['id'] == _selectedStoreId)) {
+              _selectedStoreId = _myStores.first['id'];
+            }
+          } else {
+            _selectedStoreId = null;
+          }
+          _isLoading = false;
+        });
+        _setupNotificationListener(); 
       }
-    } else {
-      _selectedStoreId = storeId;
-    }
-
-    if (mounted) setState(() => _isLoading = false);
-    
-    _setupNotificationListener();
+    });
   }
 
   void _setupNotificationListener() {
@@ -199,16 +244,17 @@ class _DashboardPageState extends State<DashboardPage> {
 
     final List<Widget> pages = [
       HomeTab(
+        userName: _userName,
         userRole: _userRole ?? 'Unknown',
         selectedStoreId: _selectedStoreId,
         stores: _myStores,
         onStoreChanged: (val) => setState(() => _selectedStoreId = val),
         onViewAllMachines: () => setState(() => _selectedIndex = 1),
       ),
-      MachinePage(selectedStoreId: _selectedStoreId),
+      MachinePage(selectedStoreId: _selectedStoreId, userRole: _userRole ?? 'Unknown'),
       MasterPelangganPage(selectedStoreId: _selectedStoreId),
       StatsPage(selectedStoreId: _selectedStoreId),
-      const ProfilePage(),
+      ProfilePage(selectedStoreId: _selectedStoreId),
     ];
 
     return Scaffold(
@@ -295,6 +341,7 @@ class _DashboardPageState extends State<DashboardPage> {
 }
 
 class HomeTab extends StatelessWidget {
+  final String? userName;
   final String userRole;
   final String? selectedStoreId;
   final List<Map<String, dynamic>> stores;
@@ -303,6 +350,7 @@ class HomeTab extends StatelessWidget {
 
   const HomeTab({
     super.key, 
+    this.userName,
     required this.userRole,
     this.selectedStoreId, 
     required this.stores, 
@@ -405,6 +453,8 @@ class HomeTab extends StatelessWidget {
     final textColor = isDark ? Colors.white : const Color(0xFF0F3460);
     final cardColor = isDark ? const Color(0xFF1E293B) : Colors.white;
 
+    final displayName = userName ?? user?.displayName ?? "User";
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -413,7 +463,7 @@ class HomeTab extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                "Hello, ${user?.displayName ?? "User"} 👋",
+                "Hello, $displayName 👋",
                 style: TextStyle(
                   fontSize: 26,
                   fontWeight: FontWeight.w900,
@@ -468,6 +518,30 @@ class HomeTab extends StatelessWidget {
 
         Row(
           children: [
+            if ((userRole == 'Owner' || userRole == 'Cashier') && selectedStoreId != null)
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => CustomerModePage(storeId: selectedStoreId!),
+                    ),
+                  );
+                },
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2563EB),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(color: const Color(0xFF2563EB).withOpacity(0.4), blurRadius: 15, offset: const Offset(0, 5)),
+                    ],
+                  ),
+                  child: const Icon(Icons.important_devices, color: Colors.white),
+                ),
+              ),
+            const SizedBox(width: 16),
             GestureDetector(
               onTap: () {
                 Navigator.push(

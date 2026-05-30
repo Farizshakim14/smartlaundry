@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:aplikasilaundry/main.dart';
@@ -18,35 +19,51 @@ class _SettingsPageState extends State<SettingsPage> {
   bool isPhoneVerified = false;
   String? phoneNumber;
 
+  StreamSubscription<QuerySnapshot>? _userSubscription;
+
   @override
   void initState() {
     super.initState();
     _checkVerificationStatus();
   }
 
-  Future<void> _checkVerificationStatus() async {
-    user = FirebaseAuth.instance.currentUser;
-    await user?.reload(); // Refresh token
-    user = FirebaseAuth.instance.currentUser; // Get updated user
+  @override
+  void dispose() {
+    _userSubscription?.cancel();
+    super.dispose();
+  }
 
-    if (user != null) {
-      isEmailVerified = user!.emailVerified;
-      
-      // Cek apakah ada nomor HP di Firebase Auth atau Firestore
-      // Biasanya nomor HP terverifikasi masuk ke user.providerData
-      bool hasPhoneProvider = user!.providerData.any((p) => p.providerId == 'phone');
-      
-      // Ambil nomor HP dari Firestore (karena di pendaftaran awal kita menyimpannya di sana)
-      final doc = await FirebaseFirestore.instance.collection('users').where('email', isEqualTo: user!.email).limit(1).get();
-      if (doc.docs.isNotEmpty) {
-        phoneNumber = doc.docs.first.data()['phone'];
-        // Jika ada provider phone dan nomornya cocok/ada, berarti verified
-        // Atau kita simpan status verified di Firestore
-        isPhoneVerified = doc.docs.first.data()['phone_verified'] ?? hasPhoneProvider;
+  void _checkVerificationStatus() {
+    user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    user?.reload().then((_) {
+      if (mounted) {
+        setState(() {
+          user = FirebaseAuth.instance.currentUser;
+          isEmailVerified = user?.emailVerified ?? false;
+        });
       }
-      
-      if (mounted) setState(() {});
-    }
+    });
+
+    bool hasPhoneProvider = user!.providerData.any((p) => p.providerId == 'phone');
+
+    _userSubscription?.cancel();
+    _userSubscription = FirebaseFirestore.instance
+        .collection('users')
+        .where('email', isEqualTo: user!.email)
+        .limit(1)
+        .snapshots()
+        .listen((doc) {
+      if (doc.docs.isNotEmpty) {
+        if (mounted) {
+          setState(() {
+            phoneNumber = doc.docs.first.data()['phone'];
+            isPhoneVerified = doc.docs.first.data()['phone_verified'] ?? hasPhoneProvider;
+          });
+        }
+      }
+    });
   }
 
   Future<void> _sendEmailVerification() async {
@@ -144,7 +161,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (doc.docs.isNotEmpty) {
       await FirebaseFirestore.instance.collection('users').doc(doc.docs.first.id).update({'phone_verified': true});
     }
-    await _checkVerificationStatus();
+    // Listener will automatically update the UI
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Nomor HP berhasil diverifikasi!"), backgroundColor: Colors.green));
     }
@@ -193,7 +210,7 @@ class _SettingsPageState extends State<SettingsPage> {
               icon: Icons.person_outline,
               title: "Edit Profile",
               onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const EditProfilePage())).then((_) => _checkVerificationStatus());
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const EditProfilePage()));
               },
             ),
             _buildSettingsMenu(

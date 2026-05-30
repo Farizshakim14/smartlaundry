@@ -98,8 +98,8 @@ class _StoreManagementPageState extends State<StoreManagementPage> {
 
     Query storeQuery = FirebaseFirestore.instance.collection('stores');
     
-    // Jika Owner, filter hanya toko miliknya
-    if (widget.currentRole == 'Owner') {
+    // Paksa filter hanya toko miliknya sendiri jika bukan Superadmin/Admin
+    if (widget.currentRole != 'Superadmin' && widget.currentRole != 'Admin') {
       storeQuery = storeQuery.where('owner_email', isEqualTo: currentUser?.email);
     }
 

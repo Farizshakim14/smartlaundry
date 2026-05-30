@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dashboard.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -25,8 +26,28 @@ class _LoginPageState extends State<LoginPage> {
         builder: (context) => const Center(child: CircularProgressIndicator()),
       );
 
-      GoogleAuthProvider authProvider = GoogleAuthProvider();
-      UserCredential userCredential = await FirebaseAuth.instance.signInWithPopup(authProvider);
+      UserCredential userCredential;
+
+      if (kIsWeb) {
+        GoogleAuthProvider authProvider = GoogleAuthProvider();
+        userCredential = await FirebaseAuth.instance.signInWithPopup(authProvider);
+      } else {
+        final GoogleSignIn googleSignIn = GoogleSignIn();
+        final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
+        
+        if (googleUser == null) {
+          if (mounted) Navigator.pop(context); // User membatalkan login
+          return;
+        }
+
+        final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+        final AuthCredential credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken,
+        );
+
+        userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
+      }
 
       final userEmail = userCredential.user?.email;
       if (userEmail != null) {

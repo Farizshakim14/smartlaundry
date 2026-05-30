@@ -99,8 +99,34 @@ class _MasterPelangganPageState extends State<MasterPelangganPage> {
             child: widget.selectedStoreId == null
               ? const Center(child: Text("Silakan pilih toko di Dashboard terlebih dahulu.", style: TextStyle(color: Colors.grey)))
               : StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('pelanggan').where('store_id', isEqualTo: widget.selectedStoreId).snapshots(),
-        builder: (context, snapshot) {
+                  stream: FirebaseFirestore.instance.collection('transactions').where('store_id', isEqualTo: widget.selectedStoreId).snapshots(),
+                  builder: (context, txSnapshot) {
+                    Map<String, Map<String, int>> customerUsage = {};
+                    if (txSnapshot.hasData) {
+                      for (var doc in txSnapshot.data!.docs) {
+                        final data = doc.data() as Map<String, dynamic>;
+                        final cName = data['customer_name'] as String?;
+                        final sType = data['service_type'] as String?;
+                        
+                        if (cName != null && sType != null) {
+                          if (!customerUsage.containsKey(cName)) {
+                            customerUsage[cName] = {'wash': 0, 'dry': 0};
+                          }
+                          if (sType == 'Wash') {
+                            customerUsage[cName]!['wash'] = customerUsage[cName]!['wash']! + 1;
+                          } else if (sType == 'Dry') {
+                            customerUsage[cName]!['dry'] = customerUsage[cName]!['dry']! + 1;
+                          } else if (sType == 'Combo') {
+                            customerUsage[cName]!['wash'] = customerUsage[cName]!['wash']! + 1;
+                            customerUsage[cName]!['dry'] = customerUsage[cName]!['dry']! + 1;
+                          }
+                        }
+                      }
+                    }
+
+                    return StreamBuilder<QuerySnapshot>(
+                      stream: FirebaseFirestore.instance.collection('pelanggan').where('store_id', isEqualTo: widget.selectedStoreId).snapshots(),
+                      builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
@@ -148,6 +174,22 @@ class _MasterPelangganPageState extends State<MasterPelangganPage> {
                         children: [
                           Text(customer['name']?.toString() ?? 'Tanpa Nama', style: TextStyle(color: isDark ? Colors.white : Colors.black, fontWeight: FontWeight.bold)),
                           Text(customer['phone']?.toString() ?? '-', style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600])),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(color: Colors.blue.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
+                                child: Text("Washer: ${customerUsage[customer['name']]?['wash'] ?? 0}x", style: const TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.w600)),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(color: Colors.orange.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
+                                child: Text("Dryer: ${customerUsage[customer['name']]?['dry'] ?? 0}x", style: const TextStyle(fontSize: 11, color: Colors.orange, fontWeight: FontWeight.w600)),
+                              ),
+                            ],
+                          ),
                         ],
                       ),
                     ),
@@ -189,9 +231,11 @@ class _MasterPelangganPageState extends State<MasterPelangganPage> {
                 ),
               );
             },
-          );
-        },
-      ),
+                          );
+                        },
+                      );
+                  },
+                ),
       ),
       ],
       ),

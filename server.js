@@ -157,14 +157,14 @@ app.post('/pay', async (req, res) => {
 });
 
 // ==========================================
-// MIDTRANS API UNTUK MENYALAKAN MESIN
+// API PEMBAYARAN SERVICE (QUEUE SYSTEM)
 // ==========================================
-app.post('/pay-machine', async (req, res) => {
+app.post('/pay-service', async (req, res) => {
     try {
-        const { price, store_id, machine_id, machine_name, machine_type, timer_enabled, duration_minutes, batch_id } = req.body;
-        console.log("💰 Request masuk untuk Sewa Mesin:", machine_name, price);
+        const { price, store_id, customer_name, customer_phone, service_type, batch_id, quantity } = req.body;
+        console.log("💰 Request masuk untuk Service:", service_type, customer_name, "Qty:", quantity || 1);
 
-        const orderId = 'MAC-' + Date.now();
+        const orderId = 'SRV-' + Date.now();
 
         const parameter = {
             transaction_details: {
@@ -172,28 +172,23 @@ app.post('/pay-machine', async (req, res) => {
                 gross_amount: price,
             },
             customer_details: {
-                first_name: store_id, 
+                first_name: customer_name,
+                phone: customer_phone,
             },
-            enabled_payments: [
-                "gopay",
-                "other_qris",
-                "shopeepay"
-            ]
+            enabled_payments: ["gopay", "other_qris", "shopeepay"]
         };
         const transaction = await snap.createTransaction(parameter);
 
-        // Simpan request
-        await db.collection('machine_requests').doc(orderId).set({
+        await db.collection('service_requests').doc(orderId).set({
             store_id: store_id,
-            machine_id: machine_id,
-            machine_name: machine_name,
-            machine_type: machine_type,
-            timer_enabled: timer_enabled,
-            duration_minutes: duration_minutes || 0,
+            customer_name: customer_name,
+            customer_phone: customer_phone,
+            service_type: service_type, // 'Wash', 'Dry', 'Combo'
+            quantity: quantity || 1,
             batch_id: batch_id,
             price: price,
             method: 'Midtrans',
-            status: 'Pending',
+            status: 'Pending Payment',
             created_at: admin.firestore.FieldValue.serverTimestamp(),
         });
 
@@ -207,11 +202,120 @@ app.post('/pay-machine', async (req, res) => {
     }
 });
 
+// ==========================================
+// FUNGSI ASSIGN MACHINE OTOMATIS
+// ==========================================
+async function assignMachines(storeId) {
+    console.log(`[ASSIGNER] Mengecek antrean untuk toko ${storeId}...`);
+    try {
+        // Ambil semua mesin idle di toko ini
+        const machinesSnap = await db.collection('machines').where('store_id', '==', storeId).get();
+        const machines = machinesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const idleWashers = machines.filter(m => m.type === 'Washer' && m.status === 'Idle');
+        const idleDryers = machines.filter(m => m.type === 'Dryer' && m.status === 'Idle');
 
+        // Ambil semua antrean Pending
+        const queueSnap = await db.collection('queues')
+            .where('store_id', '==', storeId)
+            .where('status', '==', 'Pending')
+            .orderBy('created_at', 'asc')
+            .get();
+
+        for (const qDoc of queueSnap.docs) {
+            const queue = qDoc.data();
+            
+            // Tentukan mesin apa yang dibutuhkan
+            let neededType = null;
+            if (queue.service_type === 'Wash' || (queue.service_type === 'Combo' && queue.step === 'Wash')) {
+                neededType = 'Washer';
+            } else if (queue.service_type === 'Dry' || (queue.service_type === 'Combo' && queue.step === 'Dry')) {
+                neededType = 'Dryer';
+            }
+
+            if (neededType === 'Washer' && idleWashers.length > 0) {
+                const machine = idleWashers.shift(); // Ambil mesin pertama
+                await assignToMachine(qDoc.id, machine, queue);
+            } else if (neededType === 'Dryer' && idleDryers.length > 0) {
+                const machine = idleDryers.shift();
+                await assignToMachine(qDoc.id, machine, queue);
+            }
+        }
+    } catch (e) {
+        console.error("[ASSIGNER ERROR]", e);
+    }
+}
+
+async function assignToMachine(queueId, machine, queue) {
+    console.log(`✅ Mengalokasikan Mesin ${machine.name} untuk Pelanggan ${queue.customer_name}`);
+    
+    // Ubah status mesin menjadi Ready
+    await db.collection('machines').doc(machine.id).update({
+        status: 'Ready',
+        assigned_to: queue.customer_name,
+        assigned_queue_id: queueId,
+        payment_method: 'QRIS',
+        timer_enabled: true,
+        duration_minutes: 45 // Default
+    });
+
+    // Ubah status antrean menjadi Assigned
+    await db.collection('queues').doc(queueId).update({
+        status: 'Assigned',
+        assigned_machine_id: machine.id,
+        assigned_machine_name: machine.name
+    });
+}
+
+// Timer pengecekan mesin selesai secara berkala (setiap 30 detik)
+setInterval(async () => {
+    try {
+        const activeSnap = await db.collection('machines').where('status', '==', 'Active').where('timer_enabled', '==', true).get();
+        for (const doc of activeSnap.docs) {
+            const data = doc.data();
+            if (data.start_time && data.duration_minutes) {
+                const startTimeMs = data.start_time.toDate().getTime();
+                const durationMs = data.duration_minutes * 60000;
+                if (Date.now() >= startTimeMs + durationMs) {
+                    console.log(`⏰ Mesin ${data.name} selesai! Mengubah ke Idle...`);
+                    await db.collection('machines').doc(doc.id).update({
+                        status: 'Idle',
+                        start_time: admin.firestore.FieldValue.delete(),
+                        timer_enabled: admin.firestore.FieldValue.delete(),
+                        duration_minutes: admin.firestore.FieldValue.delete(),
+                        assigned_to: admin.firestore.FieldValue.delete(),
+                        assigned_queue_id: admin.firestore.FieldValue.delete()
+                    });
+
+                    // Cek jika ini adalah bagian dari Combo
+                    if (data.assigned_queue_id) {
+                        const qDoc = await db.collection('queues').doc(data.assigned_queue_id).get();
+                        if (qDoc.exists) {
+                            const qData = qDoc.data();
+                            if (qData.service_type === 'Combo' && qData.step === 'Wash') {
+                                // Lanjut ke antrean Dryer
+                                await db.collection('queues').doc(qDoc.id).update({
+                                    step: 'Dry',
+                                    status: 'Pending',
+                                    assigned_machine_id: null,
+                                    assigned_machine_name: null
+                                });
+                            }
+                        }
+                    }
+
+                    // Panggil assigner
+                    if (data.store_id) assignMachines(data.store_id);
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Timer check error:", e);
+    }
+}, 30000);
 // ==========================================
 // UPLOAD BUKTI TRANSFER MANUAL
 // ==========================================
-const storage = multer.diskStorage({
+const proofStorage = multer.diskStorage({
     destination: function (req, file, cb) {
         cb(null, 'uploads/');
     },
@@ -220,7 +324,7 @@ const storage = multer.diskStorage({
         cb(null, 'proof-' + uniqueSuffix + path.extname(file.originalname));
     }
 });
-const upload = multer({ storage: storage });
+const upload = multer({ storage: proofStorage });
 
 app.post('/upload-proof', upload.single('proof'), (req, res) => {
     try {
@@ -241,6 +345,7 @@ app.post('/upload-proof', upload.single('proof'), (req, res) => {
 // MIDTRANS WEBHOOK
 // ==========================================
 app.post('/midtrans-webhook', async (req, res) => {
+    console.log("\n[WEBHOOK RAW] Request masuk dari Midtrans:", req.body.order_id, req.body.transaction_status);
     try {
         const statusResponse = await snap.transaction.notification(req.body);
         let orderId = statusResponse.order_id;
@@ -255,7 +360,7 @@ app.post('/midtrans-webhook', async (req, res) => {
             } else if (fraudStatus == 'accept' || !fraudStatus) {
                 // Pembayaran Sukses
                 if (orderId.startsWith('MAC-')) {
-                    // ALUR PEMBAYARAN MESIN
+                    // ALUR PEMBAYARAN MESIN (LAMA)
                     const docRef = db.collection('machine_requests').doc(orderId);
                     const docSnap = await docRef.get();
                     if (docSnap.exists) {
@@ -304,6 +409,64 @@ app.post('/midtrans-webhook', async (req, res) => {
                             });
 
                             console.log(`✅ Mesin ${data.machine_id} berhasil dinyalakan via Midtrans`);
+                        }
+                    }
+                } else if (orderId.startsWith('SRV-')) {
+                    // ALUR PEMBAYARAN SERVICE BARU (QUEUE)
+                    const docRef = db.collection('service_requests').doc(orderId);
+                    const docSnap = await docRef.get();
+                    
+                    if (docSnap.exists) {
+                        const data = docSnap.data();
+                        if (data.status === 'Pending Payment') {
+                            await docRef.update({ status: 'Paid' });
+
+                            const qty = data.quantity || 1;
+
+                            // 1. Potong token jika ada
+                            if (data.batch_id) {
+                                const batchRef = db.collection('stores').doc(data.store_id).collection('token_batches').doc(data.batch_id);
+                                const batchDoc = await batchRef.get();
+                                if (batchDoc.exists && batchDoc.data().remaining_tokens > 0) {
+                                    // Jika Combo, potong 2 token, selain itu 1 token
+                                    const deduct = (data.service_type === 'Combo' ? -2 : -1) * qty;
+                                    await batchRef.update({
+                                        remaining_tokens: admin.firestore.FieldValue.increment(deduct)
+                                    });
+                                }
+                            }
+
+                            // 2. Buat antrean (Queue)
+                            const step = data.service_type === 'Combo' ? 'Wash' : data.service_type;
+                            for (let i = 0; i < qty; i++) {
+                                await db.collection('queues').add({
+                                    store_id: data.store_id,
+                                    customer_name: data.customer_name,
+                                    customer_phone: data.customer_phone,
+                                    service_type: data.service_type,
+                                    step: step,
+                                    status: 'Pending', // Menunggu mesin kosong
+                                    created_at: admin.firestore.FieldValue.serverTimestamp()
+                                });
+                            }
+
+                            // 3. Catat transaksi (satu per layanan agar count di frontend tetap akurat)
+                            for (let i = 0; i < qty; i++) {
+                                await db.collection('transactions').add({
+                                    store_id: data.store_id,
+                                    customer_name: data.customer_name,
+                                    service_type: data.service_type,
+                                    payment_method: 'QRIS Midtrans',
+                                    amount: (data.price || 0) / qty,
+                                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                                    status: 'Completed',
+                                });
+                            }
+
+                            console.log(`✅ Pembayaran Service sukses untuk ${data.customer_name}, mengecek ketersediaan mesin...`);
+                            
+                            // 4. Trigger Assigner
+                            assignMachines(data.store_id);
                         }
                     }
                 } else {

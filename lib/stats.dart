@@ -50,13 +50,24 @@ class StatsPage extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
-            child: Text(
-              "Statistics",
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: isDark ? Colors.white : const Color(0xFF1E293B),
-              ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  "Statistics",
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: isDark ? Colors.white : const Color(0xFF1E293B),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => _showAddTransactionDialog(context, isDark),
+                  icon: const Icon(Icons.add_circle, size: 28),
+                  color: const Color(0xFF2563EB),
+                  tooltip: "Tambah Transaksi Manual",
+                ),
+              ],
             ),
           ),
           Expanded(
@@ -73,16 +84,27 @@ class StatsPage extends StatelessWidget {
                       .where('status', isEqualTo: 'Approved')
                       .snapshots(),
                   builder: (context, tokenSnap) {
-                    if (transSnap.hasError || tokenSnap.hasError) {
-                      return const Center(child: Text("Terjadi kesalahan memuat data."));
-                    }
-                    if (transSnap.connectionState == ConnectionState.waiting && !transSnap.hasData) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
+                    return StreamBuilder<QuerySnapshot>(
+                      stream: FirebaseFirestore.instance
+                          .collection('manual_transactions')
+                          .where('store_id', isEqualTo: selectedStoreId)
+                          .snapshots(),
+                      builder: (context, manualSnap) {
+                        if (transSnap.hasError || tokenSnap.hasError || manualSnap.hasError) {
+                          return const Center(child: Text("Terjadi kesalahan memuat data."));
+                        }
+                        
+                        final bool transWaiting = transSnap.connectionState == ConnectionState.waiting && !transSnap.hasData;
+                        final bool tokenWaiting = tokenSnap.connectionState == ConnectionState.waiting && !tokenSnap.hasData;
+                        final bool manualWaiting = manualSnap.connectionState == ConnectionState.waiting && !manualSnap.hasData;
+                        
+                        if (transWaiting && tokenWaiting && manualWaiting) {
+                          return const Center(child: CircularProgressIndicator());
+                        }
 
-                    int totalIncome = 0;
-                    int totalExpense = 0;
-                    List<Map<String, dynamic>> allTransactions = [];
+                        int totalIncome = 0;
+                        int totalExpense = 0;
+                        List<Map<String, dynamic>> allTransactions = [];
 
                     // Proses Transaksi Pemasukan (Mesin)
                     if (transSnap.hasData) {
@@ -101,6 +123,7 @@ class StatsPage extends StatelessWidget {
                           'date': date,
                           'amountStr': "+ Rp ${_formatRupiahPositive(amount)}",
                           'isIncome': true,
+                          'isManual': false,
                           'timestamp': data['timestamp'],
                         });
                       }
@@ -123,7 +146,39 @@ class StatsPage extends StatelessWidget {
                           'date': date,
                           'amountStr': "- Rp ${_formatRupiahPositive(price)}",
                           'isIncome': false,
+                          'isManual': false,
                           'timestamp': data['created_at'],
+                        });
+                      }
+                    }
+
+                    // Proses Transaksi Manual
+                    if (manualSnap.hasData) {
+                      for (var doc in manualSnap.data!.docs) {
+                        final data = doc.data() as Map<String, dynamic>;
+                        final int amount = data['amount'] ?? 0;
+                        final bool isIncome = data['type'] == 'income';
+                        
+                        if (isIncome) {
+                          totalIncome += amount;
+                        } else {
+                          totalExpense += amount;
+                        }
+                        
+                        DateTime? date;
+                        if (data['timestamp'] != null) {
+                          date = (data['timestamp'] as Timestamp).toDate();
+                        }
+                        
+                        allTransactions.add({
+                          'docId': doc.id,
+                          'title': data['title'] ?? (isIncome ? 'Pemasukan Manual' : 'Pengeluaran Manual'),
+                          'date': date,
+                          'amountStr': "${isIncome ? '+' : '-'} Rp ${_formatRupiahPositive(amount)}",
+                          'rawAmount': amount,
+                          'isIncome': isIncome,
+                          'isManual': true,
+                          'timestamp': data['timestamp'],
                         });
                       }
                     }
@@ -225,10 +280,14 @@ class StatsPage extends StatelessWidget {
                           else
                             ...allTransactions.map((trx) {
                               return _buildTransactionItem(
+                                context: context,
                                 title: trx['title'],
                                 date: trx['date'] != null ? _formatDate(trx['date']) : 'Unknown Date',
                                 amount: trx['amountStr'],
+                                rawAmount: trx['rawAmount'],
+                                docId: trx['docId'],
                                 isIncome: trx['isIncome'],
+                                isManual: trx['isManual'] ?? false,
                                 isDark: isDark,
                               );
                             }),
@@ -238,8 +297,10 @@ class StatsPage extends StatelessWidget {
                   },
                 );
               },
-            ),
-          ),
+            );
+          },
+        ),
+      ),
         ],
       ),
     );
@@ -285,10 +346,14 @@ class StatsPage extends StatelessWidget {
   }
 
   Widget _buildTransactionItem({
+    required BuildContext context,
     required String title,
     required String date,
     required String amount,
+    int? rawAmount,
+    String? docId,
     required bool isIncome,
+    required bool isManual,
     required bool isDark,
   }) {
     return Container(
@@ -351,8 +416,252 @@ class StatsPage extends StatelessWidget {
               fontSize: 15,
             ),
           ),
+          if (isManual && docId != null)
+            PopupMenuButton<String>(
+              icon: Icon(Icons.more_vert, color: isDark ? Colors.grey[400] : Colors.grey[600]),
+              onSelected: (value) {
+                if (value == 'edit') {
+                  _showAddTransactionDialog(
+                    context, 
+                    isDark, 
+                    docId: docId, 
+                    initialTitle: title, 
+                    initialAmount: rawAmount, 
+                    initialType: isIncome ? 'income' : 'expense',
+                  );
+                } else if (value == 'delete') {
+                  _confirmDelete(context, docId);
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: 'edit', child: Text("Edit")),
+                const PopupMenuItem(value: 'delete', child: Text("Hapus")),
+              ],
+            )
         ],
       ),
+    );
+  }
+
+  void _confirmDelete(BuildContext context, String docId) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Hapus Transaksi"),
+        content: const Text("Apakah Anda yakin ingin menghapus transaksi ini?"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Batal"),
+          ),
+          TextButton(
+            onPressed: () {
+              FirebaseFirestore.instance.collection('manual_transactions').doc(docId).delete();
+              Navigator.pop(context);
+            },
+            child: const Text("Hapus", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAddTransactionDialog(
+    BuildContext context, 
+    bool isDark, {
+    String? docId,
+    String? initialTitle,
+    int? initialAmount,
+    String? initialType,
+  }) {
+    String selectedType = initialType ?? 'income'; // default to pemasukan
+    final TextEditingController titleController = TextEditingController(text: initialTitle);
+    final TextEditingController amountController = TextEditingController(text: initialAmount?.toString());
+    bool isLoading = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              backgroundColor: isDark ? const Color(0xFF1E293B) : Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: Text(
+                docId == null ? "Tambah Transaksi Manual" : "Edit Transaksi Manual",
+                style: TextStyle(
+                  color: isDark ? Colors.white : const Color(0xFF1E293B),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Segmented Control for Type
+                    Row(
+                      children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => setState(() => selectedType = 'income'),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              decoration: BoxDecoration(
+                                color: selectedType == 'income'
+                                    ? const Color(0xFF10B981)
+                                    : (isDark ? Colors.grey[800] : Colors.grey[200]),
+                                borderRadius: const BorderRadius.horizontal(left: Radius.circular(8)),
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                "Pemasukan",
+                                style: TextStyle(
+                                  color: selectedType == 'income'
+                                      ? Colors.white
+                                      : (isDark ? Colors.grey[400] : Colors.grey[700]),
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => setState(() => selectedType = 'expense'),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              decoration: BoxDecoration(
+                                color: selectedType == 'expense'
+                                    ? const Color(0xFFEF4444)
+                                    : (isDark ? Colors.grey[800] : Colors.grey[200]),
+                                borderRadius: const BorderRadius.horizontal(right: Radius.circular(8)),
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                "Pengeluaran",
+                                style: TextStyle(
+                                  color: selectedType == 'expense'
+                                      ? Colors.white
+                                      : (isDark ? Colors.grey[400] : Colors.grey[700]),
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    // Keterangan
+                    TextField(
+                      controller: titleController,
+                      style: TextStyle(color: isDark ? Colors.white : Colors.black),
+                      decoration: InputDecoration(
+                        labelText: "Keterangan (contoh: Jual Deterjen)",
+                        labelStyle: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600]),
+                        enabledBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(color: isDark ? Colors.grey[700]! : Colors.grey[300]!),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Nominal
+                    TextField(
+                      controller: amountController,
+                      keyboardType: TextInputType.number,
+                      style: TextStyle(color: isDark ? Colors.white : Colors.black),
+                      decoration: InputDecoration(
+                        labelText: "Nominal (Rp)",
+                        labelStyle: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600]),
+                        enabledBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(color: isDark ? Colors.grey[700]! : Colors.grey[300]!),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isLoading ? null : () => Navigator.pop(context),
+                  child: const Text("Batal", style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  onPressed: isLoading
+                      ? null
+                      : () async {
+                          final title = titleController.text.trim();
+                          final amountText = amountController.text.trim();
+                          
+                          if (title.isEmpty || amountText.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text("Harap isi semua kolom")),
+                            );
+                            return;
+                          }
+                          
+                          final int? amount = int.tryParse(amountText);
+                          if (amount == null || amount <= 0) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text("Nominal tidak valid")),
+                            );
+                            return;
+                          }
+
+                          setState(() => isLoading = true);
+
+                          try {
+                            if (docId == null) {
+                              await FirebaseFirestore.instance.collection('manual_transactions').add({
+                                'store_id': selectedStoreId,
+                                'title': title,
+                                'amount': amount,
+                                'type': selectedType,
+                                'timestamp': FieldValue.serverTimestamp(),
+                              });
+                            } else {
+                              await FirebaseFirestore.instance.collection('manual_transactions').doc(docId).update({
+                                'title': title,
+                                'amount': amount,
+                                'type': selectedType,
+                              });
+                            }
+                            
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(docId == null ? "Transaksi berhasil ditambahkan" : "Transaksi berhasil diubah")),
+                              );
+                            }
+                          } catch (e) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text("Gagal menyimpan data: $e")),
+                              );
+                            }
+                          } finally {
+                            if (context.mounted) setState(() => isLoading = false);
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2563EB),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: isLoading
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                        )
+                      : const Text("Simpan", style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }

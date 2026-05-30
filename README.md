@@ -90,5 +90,5 @@ Pastikan Anda TIDAK mengunggah kunci rahasia (*Server Key*) Midtrans Anda secara
 
 <div align="center">
   <br>
-  <i>Dibuat sebagai bagian dari Tugas Akhir / Skripsi untuk memodernisasi manajemen Laundry di Indonesia.</i>
+  <i>Dibuat untuk memodernisasi manajemen Laundry di Indonesia.</i>
 </div>

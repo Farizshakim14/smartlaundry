@@ -4,16 +4,28 @@ import 'package:aplikasilaundry/settings.dart';
 import 'package:aplikasilaundry/welcome_page.dart';
 import 'package:aplikasilaundry/store_management.dart';
 import 'package:aplikasilaundry/user_management.dart';
+import 'package:aplikasilaundry/customer_mode.dart';
+import 'package:aplikasilaundry/guide.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key});
+  final String? selectedStoreId;
+  const ProfilePage({super.key, this.selectedStoreId});
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
 }
 
 class _ProfilePageState extends State<ProfilePage> {
+  final Map<String, Future<DocumentSnapshot>> _storeCache = {};
+
+  Future<DocumentSnapshot> _getStoreData(String storeId) {
+    if (!_storeCache.containsKey(storeId)) {
+      _storeCache[storeId] = FirebaseFirestore.instance.collection('stores').doc(storeId).get();
+    }
+    return _storeCache[storeId]!;
+  }
+
   Future<String> _getUserRole(String? email) async {
     if (email == 'farizshakim.14@gmail.com') {
       return 'Superadmin';
@@ -77,11 +89,13 @@ class _ProfilePageState extends State<ProfilePage> {
 
                 String currentRole = 'Unknown';
                 String currentName = user.displayName ?? "User";
+                String? currentStoreId;
 
                 if (snapshot.hasData && snapshot.data!.docs.isNotEmpty) {
                   final data = snapshot.data!.docs.first.data() as Map<String, dynamic>;
                   currentRole = data['role']?.toString() ?? 'Unknown';
                   currentName = data['name']?.toString() ?? currentName;
+                  currentStoreId = data['store_id']?.toString();
                 }
 
                 if (user.email == 'farizshakim.14@gmail.com') {
@@ -112,6 +126,28 @@ class _ProfilePageState extends State<ProfilePage> {
                               ),
                             ),
                             const SizedBox(height: 16),
+                            if (currentStoreId != null && currentStoreId.isNotEmpty)
+                              FutureBuilder<DocumentSnapshot>(
+                                future: _getStoreData(currentStoreId),
+                                builder: (context, storeSnapshot) {
+                                  if (storeSnapshot.hasData && storeSnapshot.data!.exists) {
+                                    final storeData = storeSnapshot.data!.data() as Map<String, dynamic>;
+                                    return Padding(
+                                      padding: const EdgeInsets.only(bottom: 4.0),
+                                      child: Text(
+                                        (storeData['name'] ?? '').toString().toUpperCase(),
+                                        style: const TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF2563EB),
+                                          letterSpacing: 2.0,
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  return const SizedBox();
+                                },
+                              ),
                             Text(
                               currentName,
                               style: TextStyle(
@@ -151,7 +187,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
                       // Administrasi
                       _buildMenuSection("Administration", [
-                        if (currentRole == 'Superadmin' || currentRole == 'Admin') ...[
+                        if (currentRole == 'Superadmin' || currentRole == 'Admin' || currentRole == 'Owner') ...[
                           _buildMenuItem(
                             Icons.people_alt_outlined, 
                             "User Management", 
@@ -183,6 +219,24 @@ class _ProfilePageState extends State<ProfilePage> {
                         ],
                       ], isDark),
 
+                      // Layanan (Self-Service)
+                      if ((widget.selectedStoreId ?? currentStoreId) != null && (widget.selectedStoreId ?? currentStoreId)!.isNotEmpty)
+                        _buildMenuSection("Layanan", [
+                          _buildMenuItem(
+                            Icons.tablet_android, 
+                            "Mode Pelanggan (Self-Service)", 
+                            isDark: isDark,
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => CustomerModePage(storeId: (widget.selectedStoreId ?? currentStoreId)!),
+                                ),
+                              );
+                            }
+                          ),
+                        ], isDark),
+
                       // Pengaturan
                       _buildMenuSection("Settings", [
                         _buildMenuItem(Icons.settings_outlined, "Pengaturan Akun & Aplikasi", isDark: isDark, onTap: () {
@@ -195,6 +249,19 @@ class _ProfilePageState extends State<ProfilePage> {
 
                       // Lainnya
                       _buildMenuSection("Other", [
+                        _buildMenuItem(
+                          Icons.menu_book, 
+                          "Panduan Memakai Aplikasi", 
+                          isDark: isDark, 
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => GuidePage(role: currentRole),
+                              ),
+                            );
+                          }
+                        ),
                         _buildMenuItem(Icons.help_outline, "Help & Support", isDark: isDark, onTap: () {}),
                         _buildMenuItem(
                           Icons.logout,

@@ -32,4 +32,3 @@ echo.
 echo ==============================================
 echo DEPLOYMENT SELESAI! APLIKASI TELAH DIPERBARUI.
 echo ==============================================
-pause

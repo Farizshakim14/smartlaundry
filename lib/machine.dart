@@ -7,7 +7,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 class MachinePage extends StatefulWidget {
   final String? selectedStoreId;
-  const MachinePage({super.key, this.selectedStoreId});
+  final String userRole;
+  const MachinePage({super.key, this.selectedStoreId, required this.userRole});
 
   @override
   State<MachinePage> createState() => _MachinePageState();
@@ -350,8 +351,8 @@ class _MachinePageState extends State<MachinePage> {
     }
   }
 
-  // Membuka form tambah mesin (BottomSheet)
-  void _showAddMachineDialog() {
+  // Membuka form tambah/edit mesin (BottomSheet)
+  void _showAddMachineDialog({String? machineId, Map<String, dynamic>? initialData}) {
     if (widget.selectedStoreId == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pilih toko terlebih dahulu.')));
       return;
@@ -360,22 +361,29 @@ class _MachinePageState extends State<MachinePage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => AddMachineForm(selectedStoreId: widget.selectedStoreId!),
+      builder: (context) => AddMachineForm(selectedStoreId: widget.selectedStoreId!, initialData: initialData),
     ).then((newMachine) async {
-      // Jika form dikembalikan (submit) dengan data baru, tambahkan ke Firestore
+      // Jika form dikembalikan (submit) dengan data baru, tambahkan/update ke Firestore
       if (newMachine != null) {
-        await FirebaseFirestore.instance.collection('machines').add(newMachine);
-        
-        await ActivityService.logActivity(
-          storeId: widget.selectedStoreId,
-          action: "Menambahkan mesin baru (${newMachine['type']} - ${newMachine['name']})",
-        );
+        if (machineId == null) {
+          await FirebaseFirestore.instance.collection('machines').add(newMachine);
+          await ActivityService.logActivity(
+            storeId: widget.selectedStoreId,
+            action: "Menambahkan mesin baru (${newMachine['type']} - ${newMachine['name']})",
+          );
+        } else {
+          await FirebaseFirestore.instance.collection('machines').doc(machineId).update(newMachine);
+          await ActivityService.logActivity(
+            storeId: widget.selectedStoreId,
+            action: "Mengubah data mesin (${newMachine['type']} - ${newMachine['name']})",
+          );
+        }
         
         // Tampilkan notifikasi sukses
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('${newMachine["name"]} berhasil ditambahkan!'),
+              content: Text('${newMachine["name"]} berhasil ${machineId == null ? "ditambahkan" : "diperbarui"}!'),
               backgroundColor: const Color(0xFF10B981),
               behavior: SnackBarBehavior.floating,
             ),
@@ -383,6 +391,38 @@ class _MachinePageState extends State<MachinePage> {
         }
       }
     });
+  }
+
+  void _confirmDeleteMachine(String machineId, String machineName) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Hapus Mesin"),
+        content: Text("Apakah Anda yakin ingin menghapus mesin '$machineName'?"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Batal"),
+          ),
+          TextButton(
+            onPressed: () async {
+              await FirebaseFirestore.instance.collection('machines').doc(machineId).delete();
+              await ActivityService.logActivity(
+                storeId: widget.selectedStoreId,
+                action: "Menghapus mesin ($machineName)",
+              );
+              if (mounted) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text("Mesin '$machineName' berhasil dihapus!")),
+                );
+              }
+            },
+            child: const Text("Hapus", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -548,6 +588,21 @@ class _MachinePageState extends State<MachinePage> {
                         icon: const Icon(Icons.stop_circle, color: Colors.red, size: 36),
                         onPressed: () => _stopMachine(doc.id, name),
                       ),
+                    if (widget.userRole == 'Superadmin' || widget.userRole == 'Admin')
+                      PopupMenuButton<String>(
+                        icon: Icon(Icons.more_vert, color: isDark ? Colors.grey[400] : Colors.grey[600]),
+                        onSelected: (value) {
+                          if (value == 'edit') {
+                            _showAddMachineDialog(machineId: doc.id, initialData: machine);
+                          } else if (value == 'delete') {
+                            _confirmDeleteMachine(doc.id, name);
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          const PopupMenuItem(value: 'edit', child: Text("Edit")),
+                          const PopupMenuItem(value: 'delete', child: Text("Hapus")),
+                        ],
+                      ),
                   ],
                 ),
               );
@@ -559,12 +614,14 @@ class _MachinePageState extends State<MachinePage> {
       ],
       ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddMachineDialog,
-        backgroundColor: const Color(0xFF2563EB),
-        icon: const Icon(Icons.add, color: Colors.white),
-        label: const Text("Add Machine", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-      ),
+      floatingActionButton: (widget.userRole == 'Superadmin' || widget.userRole == 'Admin') 
+          ? FloatingActionButton.extended(
+              onPressed: () => _showAddMachineDialog(),
+              backgroundColor: const Color(0xFF2563EB),
+              icon: const Icon(Icons.add, color: Colors.white),
+              label: const Text("Add Machine", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            )
+          : null,
     );
   }
 }
@@ -572,7 +629,8 @@ class _MachinePageState extends State<MachinePage> {
 // Komponen Formulir Tambah Mesin
 class AddMachineForm extends StatefulWidget {
   final String selectedStoreId;
-  const AddMachineForm({super.key, required this.selectedStoreId});
+  final Map<String, dynamic>? initialData;
+  const AddMachineForm({super.key, required this.selectedStoreId, this.initialData});
 
   @override
   State<AddMachineForm> createState() => _AddMachineFormState();
@@ -583,6 +641,16 @@ class _AddMachineFormState extends State<AddMachineForm> {
   String? _machineName;
   String _machineType = "Washer"; // Nilai default
   int? _machinePrice;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialData != null) {
+      _machineName = widget.initialData!['name'];
+      _machineType = widget.initialData!['type'] ?? 'Washer';
+      _machinePrice = widget.initialData!['price'];
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -610,7 +678,7 @@ class _AddMachineFormState extends State<AddMachineForm> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    "Add New Machine",
+                    widget.initialData == null ? "Add New Machine" : "Edit Machine",
                     style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
@@ -693,6 +761,7 @@ class _AddMachineFormState extends State<AddMachineForm> {
               ),
               const SizedBox(height: 8),
               TextFormField(
+                initialValue: _machinePrice?.toString(),
                 keyboardType: TextInputType.number,
                 style: TextStyle(color: isDark ? Colors.white : Colors.black),
                 decoration: InputDecoration(
@@ -742,15 +811,15 @@ class _AddMachineFormState extends State<AddMachineForm> {
                       Navigator.pop(context, {
                         "name": _machineName,
                         "type": _machineType,
-                        "status": "Idle", // Status bawaan
+                        if (widget.initialData == null) "status": "Idle", // Status bawaan jika baru
                         "store_id": widget.selectedStoreId,
                         "price": _machinePrice,
                       });
                     }
                   },
-                  child: const Text(
-                    "Save Machine",
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                  child: Text(
+                    widget.initialData == null ? "Save Machine" : "Update Machine",
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
                   ),
                 ),
               ),

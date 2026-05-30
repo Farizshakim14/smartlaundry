@@ -14,7 +14,7 @@ dependencies:
   google_fonts: ^6.2.1
   firebase_core: any
   firebase_auth: any
-  google_sign_in: ^7.2.0
+  google_sign_in: ^6.2.1
   cloud_firestore: any
   url_launcher: ^6.2.5
   http: ^1.6.0

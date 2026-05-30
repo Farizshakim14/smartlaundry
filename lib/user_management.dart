@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class UserManagementPage extends StatefulWidget {
   final String currentRole;
@@ -12,6 +13,32 @@ class UserManagementPage extends StatefulWidget {
 
 class _UserManagementPageState extends State<UserManagementPage> {
 
+  List<Map<String, dynamic>> _myStores = [];
+  bool _isLoadingStores = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchMyStores();
+  }
+
+  Future<void> _fetchMyStores() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      Query q = FirebaseFirestore.instance.collection('stores');
+      if (widget.currentRole == 'Owner') {
+        q = q.where('owner_email', isEqualTo: user.email);
+      }
+      final snap = await q.get();
+      _myStores = snap.docs.map((d) => {
+        'id': d.id,
+        'name': (d.data() as Map<String, dynamic>)['name']?.toString() ?? 'Unnamed Store'
+      }).toList();
+    }
+    setState(() {
+      _isLoadingStores = false;
+    });
+  }
 
   List<String> _getAllowedRoles() {
     switch (widget.currentRole) {
@@ -20,7 +47,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
       case "Admin":
         return ["Owner"];
       case "Owner":
-        return [];
+        return ["Cashier"];
       default:
         return [];
     }
@@ -43,7 +70,11 @@ class _UserManagementPageState extends State<UserManagementPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => AddUserForm(allowedRoles: allowedRoles),
+      builder: (context) => AddUserForm(
+        allowedRoles: allowedRoles, 
+        currentRole: widget.currentRole,
+        myStores: _myStores,
+      ),
     ).then((newUser) async {
       if (newUser != null) {
         await FirebaseFirestore.instance.collection('users').add(newUser);
@@ -114,7 +145,9 @@ class _UserManagementPageState extends State<UserManagementPage> {
         ),
         iconTheme: const IconThemeData(color: Color(0xFF1E293B)),
       ),
-      body: StreamBuilder<QuerySnapshot>(
+      body: _isLoadingStores
+        ? const Center(child: CircularProgressIndicator())
+        : StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance.collection('users').snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -136,7 +169,32 @@ class _UserManagementPageState extends State<UserManagementPage> {
             );
           }
 
-          final users = snapshot.data!.docs;
+          final users = snapshot.data!.docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            if (widget.currentRole == 'Superadmin' || widget.currentRole == 'Admin') return true;
+            
+            // For Owner, show themselves or their cashiers
+            if (data['email'] == FirebaseAuth.instance.currentUser?.email) return true;
+            if (data['role'] == 'Cashier' && _myStores.any((s) => s['id'] == data['store_id'])) return true;
+            
+            return false;
+          }).toList();
+
+          if (users.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.people_outline, size: 80, color: Colors.grey[300]),
+                  const SizedBox(height: 16),
+                  Text(
+                    "Belum ada pengguna",
+                    style: TextStyle(color: Colors.grey[500], fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            );
+          }
 
           return ListView.builder(
             padding: const EdgeInsets.all(24),
@@ -287,8 +345,15 @@ class _UserManagementPageState extends State<UserManagementPage> {
 
 class AddUserForm extends StatefulWidget {
   final List<String> allowedRoles;
+  final String currentRole;
+  final List<Map<String, dynamic>> myStores;
 
-  const AddUserForm({super.key, required this.allowedRoles});
+  const AddUserForm({
+    super.key, 
+    required this.allowedRoles, 
+    required this.currentRole, 
+    required this.myStores,
+  });
 
   @override
   State<AddUserForm> createState() => _AddUserFormState();
@@ -299,6 +364,7 @@ class _AddUserFormState extends State<AddUserForm> {
   String _name = "";
   String _email = "";
   String? _selectedRole;
+  String? _selectedStoreId;
 
   @override
   void initState() {
@@ -421,6 +487,31 @@ class _AddUserFormState extends State<AddUserForm> {
                 },
                 validator: (value) => value == null ? "Please select a role" : null,
               ),
+              if (_selectedRole == 'Cashier' && widget.myStores.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                const Text("Tugaskan ke Toko", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF1E293B))),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: _selectedStoreId,
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: const Color(0xFFF8FAFC),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                  ),
+                  items: widget.myStores.map((store) {
+                    return DropdownMenuItem(
+                      value: store['id'].toString(),
+                      child: Text(store['name'].toString()),
+                    );
+                  }).toList(),
+                  onChanged: (value) => setState(() => _selectedStoreId = value),
+                  validator: (value) => _selectedRole == 'Cashier' && value == null ? "Silakan pilih toko" : null,
+                ),
+              ],
               const SizedBox(height: 32),
 
               // Tombol Simpan
@@ -443,6 +534,7 @@ class _AddUserFormState extends State<AddUserForm> {
                         "name": _name,
                         "email": _email,
                         "role": _selectedRole!,
+                        if (_selectedRole == 'Cashier' && _selectedStoreId != null) "store_id": _selectedStoreId,
                       });
                     }
                   },
