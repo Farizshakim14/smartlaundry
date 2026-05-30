@@ -30,6 +30,7 @@ class _LoginPageState extends State<LoginPage> {
 
       if (kIsWeb) {
         GoogleAuthProvider authProvider = GoogleAuthProvider();
+        authProvider.setCustomParameters({'prompt': 'select_account'});
         userCredential = await FirebaseAuth.instance.signInWithPopup(authProvider);
       } else {
         final GoogleSignIn googleSignIn = GoogleSignIn();

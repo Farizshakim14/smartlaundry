@@ -7,6 +7,7 @@ import 'package:aplikasilaundry/user_management.dart';
 import 'package:aplikasilaundry/customer_mode.dart';
 import 'package:aplikasilaundry/guide.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 class ProfilePage extends StatefulWidget {
   final String? selectedStoreId;
@@ -270,7 +271,8 @@ class _ProfilePageState extends State<ProfilePage> {
                           isDark: isDark,
                           onTap: () async {
                             try {
-                              await FirebaseAuth.instance.signOut(); // 🔥 WAJIB
+                              await GoogleSignIn().signOut(); // 🔥 Sign out from Google
+                              await FirebaseAuth.instance.signOut(); // 🔥 Sign out from Firebase
                               Navigator.pushAndRemoveUntil(
                                 context,
                                 MaterialPageRoute(builder: (context) => const WelcomePage()),
