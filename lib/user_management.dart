@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 class UserManagementPage extends StatefulWidget {
   final String currentRole;
@@ -92,12 +94,13 @@ class _UserManagementPageState extends State<UserManagementPage> {
     });
   }
 
-  void _confirmDeleteUser(String docId, String name) {
+  void _confirmDeleteUser(String docId, String name, String email, String role) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text("Hapus Pengguna"),
-        content: Text("Apakah Anda yakin ingin menghapus akun $name?\nTindakan ini tidak dapat dibatalkan."),
+        content: Text("Apakah Anda yakin ingin menghapus akun $name?\nTindakan ini tidak dapat dibatalkan" + 
+          (role == 'Owner' ? "\n\n⚠️ PERINGATAN: Menghapus Owner akan ikut menghapus SEMUA TOKO, mesin, kasir, pelanggan, dan riwayat transaksinya!" : ".")),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         actions: [
           TextButton(
@@ -107,23 +110,74 @@ class _UserManagementPageState extends State<UserManagementPage> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () async {
-              Navigator.pop(context);
+              Navigator.pop(context); // Tutup dialog confirmation
+              
+              // Tampilkan loading dialog
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => const Center(child: CircularProgressIndicator()),
+              );
+
               try {
+                // 1. Hapus akun dari Firebase Auth lewat API Backend (VPS)
+                try {
+                  final response = await http.post(
+                    Uri.parse('http://103.150.226.111:3000/delete-user'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode({'email': email}),
+                  );
+                  print("Auth deletion response: ${response.body}");
+                } catch (e) {
+                  print("Warning: Gagal menghapus Auth: $e");
+                }
+
+                // 2. Cascade Delete jika Owner
+                if (role == 'Owner' && email.isNotEmpty) {
+                  final storesSnap = await FirebaseFirestore.instance.collection('stores').where('owner_email', isEqualTo: email).get();
+                  
+                  for (var storeDoc in storesSnap.docs) {
+                    final storeId = storeDoc.id;
+                    final batch = FirebaseFirestore.instance.batch();
+                    
+                    // Hapus mesin
+                    final machines = await FirebaseFirestore.instance.collection('machines').where('store_id', isEqualTo: storeId).get();
+                    for (var doc in machines.docs) { batch.delete(doc.reference); }
+                    
+                    // Hapus pelanggan
+                    final pelanggan = await FirebaseFirestore.instance.collection('pelanggan').where('store_id', isEqualTo: storeId).get();
+                    for (var doc in pelanggan.docs) { batch.delete(doc.reference); }
+                    
+                    // Hapus cashier (selain owner ini)
+                    final cashiers = await FirebaseFirestore.instance.collection('users').where('store_id', isEqualTo: storeId).get();
+                    for (var doc in cashiers.docs) { batch.delete(doc.reference); }
+                    
+                    // Hapus tokonya
+                    batch.delete(storeDoc.reference);
+                    
+                    await batch.commit();
+                  }
+                }
+
+                // 3. Terakhir hapus profil user-nya dari koleksi 'users'
                 await FirebaseFirestore.instance.collection('users').doc(docId).delete();
+                
                 if (mounted) {
+                  Navigator.pop(context); // Tutup loading dialog
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Akun $name berhasil dihapus'), backgroundColor: Colors.green),
+                    SnackBar(content: Text('Akun $name berhasil dihapus secara bersih'), backgroundColor: Colors.green),
                   );
                 }
               } catch (e) {
                 if (mounted) {
+                  Navigator.pop(context); // Tutup loading dialog
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('Gagal menghapus: $e'), backgroundColor: Colors.red),
                   );
                 }
               }
             },
-            child: const Text("Hapus", style: TextStyle(color: Colors.white)),
+            child: const Text("Hapus Permanen", style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -322,7 +376,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
                     if (canAddUser)
                       IconButton(
                         icon: const Icon(Icons.delete_outline, color: Colors.red),
-                        onPressed: () => _confirmDeleteUser(doc.id, name),
+                        onPressed: () => _confirmDeleteUser(doc.id, name, email, role),
                       ),
                   ],
                 ),

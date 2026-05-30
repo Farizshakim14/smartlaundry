@@ -159,6 +159,32 @@ app.post('/pay', async (req, res) => {
 // ==========================================
 // API PEMBAYARAN SERVICE (QUEUE SYSTEM)
 // ==========================================
+// ==========================================
+// API HAPUS USER (FIREBASE AUTHENTICATION)
+// ==========================================
+app.post('/delete-user', async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email tidak diberikan' });
+        }
+        
+        console.log(`🗑️ Menerima request penghapusan auth untuk email: ${email}`);
+        const userRecord = await admin.auth().getUserByEmail(email);
+        await admin.auth().deleteUser(userRecord.uid);
+        console.log(`✅ User auth ${email} berhasil dihapus.`);
+        
+        res.json({ success: true, message: `User ${email} terhapus dari Auth` });
+    } catch (err) {
+        if (err.code === 'auth/user-not-found') {
+            console.log(`⚠️ User ${req.body.email} tidak ditemukan di Auth. Mengabaikan...`);
+            return res.json({ success: true, message: 'User tidak ada di Auth, bisa dilanjutkan.' });
+        }
+        console.log("❌ ERROR menghapus auth:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 app.post('/pay-service', async (req, res) => {
     try {
         const { price, store_id, customer_name, customer_phone, service_type, batch_id, quantity } = req.body;
