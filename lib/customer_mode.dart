@@ -420,11 +420,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
                 return const Center(child: CircularProgressIndicator());
               }
 
-              if (!machineSnapshot.hasData || machineSnapshot.data!.docs.isEmpty) {
-                return const Center(child: Text("Belum ada mesin."));
-              }
-
-              final machines = machineSnapshot.data!.docs;
+              final machines = machineSnapshot.data?.docs ?? [];
               // Pisahkan Washer dan Dryer
               final washers = machines.where((doc) => (doc.data() as Map<String, dynamic>)['type'] == 'Washer').toList();
               final dryers = machines.where((doc) => (doc.data() as Map<String, dynamic>)['type'] == 'Dryer').toList();
@@ -523,15 +519,17 @@ class _CustomerModePageState extends State<CustomerModePage> {
                                   const Text("Status Mesin", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                                   const SizedBox(height: 16),
                                   Expanded(
-                                    child: GridView.builder(
-                                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                        crossAxisCount: isWide ? 2 : (constraints.maxWidth > 600 ? 2 : 1),
-                                        childAspectRatio: isWide ? 1.2 : 1.5,
-                                        crossAxisSpacing: 16,
-                                        mainAxisSpacing: 16,
-                                      ),
-                                        itemCount: allSortedMachines.length,
-                                        itemBuilder: (context, index) {
+                                    child: allSortedMachines.isEmpty 
+                                      ? const Center(child: Text("Belum ada mesin.", style: TextStyle(fontSize: 16, color: Color(0xFF64748B))))
+                                      : GridView.builder(
+                                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                            crossAxisCount: isWide ? 2 : (constraints.maxWidth > 600 ? 2 : 1),
+                                            childAspectRatio: isWide ? 1.2 : 1.5,
+                                            crossAxisSpacing: 16,
+                                            mainAxisSpacing: 16,
+                                          ),
+                                          itemCount: allSortedMachines.length,
+                                          itemBuilder: (context, index) {
                                           final machineData = allSortedMachines[index].data() as Map<String, dynamic>;
                                           final machineId = allSortedMachines[index].id;
                                           final status = machineData['status'] ?? 'Idle';
