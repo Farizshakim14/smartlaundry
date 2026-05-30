@@ -271,7 +271,11 @@ class _ProfilePageState extends State<ProfilePage> {
                           isDark: isDark,
                           onTap: () async {
                             try {
-                              await GoogleSignIn().signOut(); // 🔥 Sign out from Google
+                              try {
+                                await GoogleSignIn().signOut(); // 🔥 Sign out from Google
+                              } catch (e) {
+                                print("Google Sign Out error: $e");
+                              }
                               await FirebaseAuth.instance.signOut(); // 🔥 Sign out from Firebase
                               Navigator.pushAndRemoveUntil(
                                 context,
