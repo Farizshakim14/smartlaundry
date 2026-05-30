@@ -263,7 +263,6 @@ class _ProfilePageState extends State<ProfilePage> {
                             );
                           }
                         ),
-                        _buildMenuItem(Icons.help_outline, "Help & Support", isDark: isDark, onTap: () {}),
                         _buildMenuItem(
                           Icons.logout,
                           "Logout",
