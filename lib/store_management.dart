@@ -642,6 +642,9 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
                           DropdownButtonFormField<String>(
                             value: _ownerEmail.isNotEmpty ? _ownerEmail : null,
                             isExpanded: true,
+                            icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF3B82F6)),
+                            borderRadius: BorderRadius.circular(16),
+                            style: TextStyle(color: textColor, fontWeight: FontWeight.w600),
                             decoration: InputDecoration(
                               filled: true,
                               fillColor: fillColor,
@@ -691,6 +694,9 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
                                 child: DropdownButton<String>(
                                   value: _countryCode,
                                   dropdownColor: fillColor,
+                                  borderRadius: BorderRadius.circular(16),
+                                  icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF3B82F6)),
+                                  style: TextStyle(color: textColor, fontWeight: FontWeight.w600),
                                   items: const [
                                     DropdownMenuItem(value: '+62', child: Text("🇮🇩 +62")),
                                   ],
@@ -749,6 +755,9 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
                               DropdownButtonFormField<String>(
                                 value: _bankName,
                                 isExpanded: true,
+                                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF3B82F6)),
+                                borderRadius: BorderRadius.circular(16),
+                                style: TextStyle(color: textColor, fontWeight: FontWeight.w600),
                                 decoration: InputDecoration(
                                   filled: true,
                                   fillColor: fillColor,

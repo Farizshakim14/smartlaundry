@@ -492,9 +492,108 @@ class _MachinePageState extends State<MachinePage> {
 
           final machines = snapshot.data!.docs;
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(24),
-            itemCount: machines.length,
+          return Column(
+            children: [
+              StreamBuilder(
+                stream: Stream.periodic(const Duration(seconds: 1)),
+                builder: (context, _) {
+                  double totalAmpere = 0;
+                  double totalKwh = 0;
+                  int activeCount = 0;
+
+                  for (var doc in machines) {
+                    final m = doc.data() as Map<String, dynamic>;
+                    if (m['status'] == 'Active') {
+                      activeCount++;
+                      double amp = 0.0;
+                      if (m['current_ampere'] != null) {
+                        amp = (m['current_ampere'] as num).toDouble();
+                      }
+                      totalAmpere += amp;
+
+                      if (m['start_time'] != null) {
+                        final startTime = (m['start_time'] as Timestamp).toDate();
+                        final elapsedHours = DateTime.now().difference(startTime).inSeconds / 3600.0;
+                        totalKwh += ((amp * 220) / 1000.0) * elapsedHours;
+                      }
+                    }
+                  }
+
+                  final totalWatt = totalAmpere * 220;
+
+                  return Container(
+                    margin: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF2563EB).withOpacity(0.3),
+                          blurRadius: 15,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text("Total Beban Listrik", style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600)),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
+                              child: Text("$activeCount Mesin Aktif", style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text("Daya Saat Ini", style: TextStyle(color: Colors.white70, fontSize: 12)),
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.flash_on, color: Colors.orangeAccent, size: 20),
+                                    const SizedBox(width: 4),
+                                    Text("${totalWatt.toStringAsFixed(0)} W", style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                const Text("Estimasi Energi", style: TextStyle(color: Colors.white70, fontSize: 12)),
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    Text("${totalKwh.toStringAsFixed(3)} ", style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                                    const Text("kWh", style: TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  itemCount: machines.length,
             itemBuilder: (context, index) {
               final doc = machines[index];
               final machine = doc.data() as Map<String, dynamic>;
@@ -557,6 +656,64 @@ class _MachinePageState extends State<MachinePage> {
                               color: isDark ? Colors.grey[400] : Colors.grey[600],
                             ),
                           ),
+                          if (status == 'Active') ...[
+                            const SizedBox(height: 8),
+                            StreamBuilder(
+                              stream: Stream.periodic(const Duration(seconds: 1)),
+                              builder: (context, _) {
+                                // Mengambil arus dari database, cast ke double jika bisa
+                                double currentAmpere = 0.0;
+                                if (machine['current_ampere'] != null) {
+                                  currentAmpere = (machine['current_ampere'] as num).toDouble();
+                                }
+                                
+                                final watt = currentAmpere * 220; // Asumsi tegangan 220V
+                                
+                                double kwh = 0.0;
+                                if (machine['start_time'] != null) {
+                                  final startTime = (machine['start_time'] as Timestamp).toDate();
+                                  final elapsedSeconds = DateTime.now().difference(startTime).inSeconds;
+                                  final elapsedHours = elapsedSeconds / 3600.0;
+                                  kwh = (watt / 1000.0) * elapsedHours;
+                                }
+
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        const Icon(Icons.flash_on, color: Colors.orange, size: 14),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          "Daya: ${currentAmpere.toStringAsFixed(2)} A (${watt.toStringAsFixed(0)} Watt)",
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            color: isDark ? Colors.orange[300] : Colors.orange[800],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Row(
+                                      children: [
+                                        const Icon(Icons.battery_charging_full, color: Colors.green, size: 14),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          "Energi: ${kwh.toStringAsFixed(4)} kWh",
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            color: isDark ? Colors.green[300] : Colors.green[800],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                );
+                              }
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -607,6 +764,9 @@ class _MachinePageState extends State<MachinePage> {
                 ),
               );
             },
+          ),
+          ),
+          ],
           );
         },
       ),
@@ -716,7 +876,9 @@ class _AddMachineFormState extends State<AddMachineForm> {
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 value: _machineName,
-                style: TextStyle(color: isDark ? Colors.white : Colors.black),
+                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF3B82F6)),
+                borderRadius: BorderRadius.circular(16),
+                style: TextStyle(color: isDark ? Colors.white : Colors.black, fontWeight: FontWeight.w600),
                 dropdownColor: isDark ? const Color(0xFF1E293B) : Colors.white,
                 decoration: InputDecoration(
                   hintText: "Select Machine",

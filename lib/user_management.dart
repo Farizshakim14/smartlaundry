@@ -519,6 +519,9 @@ class _AddUserFormState extends State<AddUserForm> {
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 value: _selectedRole,
+                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF3B82F6)),
+                borderRadius: BorderRadius.circular(16),
+                style: const TextStyle(color: Color(0xFF1E293B), fontWeight: FontWeight.w600),
                 decoration: InputDecoration(
                   filled: true,
                   fillColor: const Color(0xFFF8FAFC),
@@ -547,6 +550,9 @@ class _AddUserFormState extends State<AddUserForm> {
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
                   value: _selectedStoreId,
+                  icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF3B82F6)),
+                  borderRadius: BorderRadius.circular(16),
+                  style: const TextStyle(color: Color(0xFF1E293B), fontWeight: FontWeight.w600),
                   decoration: InputDecoration(
                     filled: true,
                     fillColor: const Color(0xFFF8FAFC),

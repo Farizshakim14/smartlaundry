@@ -1,9 +1,41 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-class StatsPage extends StatelessWidget {
+class StatsPage extends StatefulWidget {
   final String? selectedStoreId;
-  const StatsPage({super.key, this.selectedStoreId});
+  final String userRole;
+  final List<Map<String, dynamic>> myStores;
+  
+  const StatsPage({
+    super.key, 
+    this.selectedStoreId,
+    this.userRole = 'Unknown',
+    this.myStores = const [],
+  });
+
+  @override
+  State<StatsPage> createState() => _StatsPageState();
+}
+
+class _StatsPageState extends State<StatsPage> {
+  String? _selectedFilterStoreId; // null = Semua Cabang
+
+  @override
+  void initState() {
+    super.initState();
+    // Jika kasir, paksa ke store_id yang dipilih di awal
+    if (widget.userRole == 'Cashier') {
+      _selectedFilterStoreId = widget.selectedStoreId;
+    }
+  }
+
+  @override
+  void didUpdateWidget(StatsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.userRole == 'Cashier' && oldWidget.selectedStoreId != widget.selectedStoreId) {
+      _selectedFilterStoreId = widget.selectedStoreId;
+    }
+  }
 
   String _formatRupiah(int amount) {
     if (amount < 0) {
@@ -34,11 +66,38 @@ class StatsPage extends StatelessWidget {
     return "${date.day} ${months[date.month - 1]} ${date.year}, $h:$m";
   }
 
+  Stream<QuerySnapshot> _getStream(String collection) {
+    var ref = FirebaseFirestore.instance.collection(collection);
+    
+    if (_selectedFilterStoreId != null) {
+      if (collection == 'token_requests') {
+        return ref.where('store_id', isEqualTo: _selectedFilterStoreId).where('status', isEqualTo: 'Approved').snapshots();
+      }
+      return ref.where('store_id', isEqualTo: _selectedFilterStoreId).snapshots();
+    } else {
+      // Semua Cabang
+      List<String> myStoreIds = widget.myStores.map((s) => s['id'] as String).toList();
+      if (myStoreIds.isEmpty) {
+        return ref.where('store_id', isEqualTo: 'TIDAK_ADA').snapshots();
+      }
+      
+      // Firebase IN max 10
+      if (myStoreIds.length > 10) {
+        myStoreIds = myStoreIds.sublist(0, 10);
+      }
+      
+      if (collection == 'token_requests') {
+        return ref.where('store_id', whereIn: myStoreIds).where('status', isEqualTo: 'Approved').snapshots();
+      }
+      return ref.where('store_id', whereIn: myStoreIds).snapshots();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    if (selectedStoreId == null) {
+    if (widget.selectedStoreId == null && widget.userRole == 'Cashier') {
       return const SafeArea(
         child: Center(child: Text("Pilih toko di Dashboard terlebih dahulu.", style: TextStyle(color: Colors.grey))),
       );
@@ -53,42 +112,92 @@ class StatsPage extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  "Statistics",
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : const Color(0xFF1E293B),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Text(
+                        "Stats",
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: isDark ? Colors.white : const Color(0xFF1E293B),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      if (widget.userRole == 'Owner')
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: isDark ? const Color(0xFF1E293B) : Colors.white,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: const Color(0xFF2563EB).withOpacity(0.3)),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(isDark ? 0.2 : 0.05),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String?>(
+                                value: _selectedFilterStoreId,
+                                isExpanded: true,
+                                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF2563EB)),
+                                borderRadius: BorderRadius.circular(16),
+                                dropdownColor: isDark ? const Color(0xFF0F172A) : Colors.white,
+                                hint: Text("Semua Cabang", style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600])),
+                                style: TextStyle(color: isDark ? Colors.white : const Color(0xFF1E293B), fontWeight: FontWeight.w600, fontSize: 14),
+                                items: [
+                                  const DropdownMenuItem<String?>(
+                                    value: null,
+                                    child: Text("Semua Cabang"),
+                                  ),
+                                  ...widget.myStores.map((store) {
+                                    return DropdownMenuItem<String?>(
+                                      value: store['id'],
+                                      child: Text(store['name'] ?? 'Unknown Store', overflow: TextOverflow.ellipsis),
+                                    );
+                                  }).toList(),
+                                ],
+                                onChanged: (val) {
+                                  setState(() {
+                                    _selectedFilterStoreId = val;
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-                IconButton(
-                  onPressed: () => _showAddTransactionDialog(context, isDark),
-                  icon: const Icon(Icons.add_circle, size: 28),
-                  color: const Color(0xFF2563EB),
-                  tooltip: "Tambah Transaksi Manual",
-                ),
+                if (widget.userRole == 'Owner')
+                  IconButton(
+                    onPressed: () {
+                      if (_selectedFilterStoreId == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pilih salah satu cabang terlebih dahulu untuk menambah transaksi manual.")));
+                        return;
+                      }
+                      _showAddTransactionDialog(context, isDark);
+                    },
+                    icon: const Icon(Icons.add_circle, size: 28),
+                    color: const Color(0xFF2563EB),
+                    tooltip: "Tambah Transaksi Manual",
+                  ),
               ],
             ),
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('transactions')
-                  .where('store_id', isEqualTo: selectedStoreId)
-                  .snapshots(),
+              stream: _getStream('transactions'),
               builder: (context, transSnap) {
                 return StreamBuilder<QuerySnapshot>(
-                  stream: FirebaseFirestore.instance
-                      .collection('token_requests')
-                      .where('store_id', isEqualTo: selectedStoreId)
-                      .where('status', isEqualTo: 'Approved')
-                      .snapshots(),
+                  stream: _getStream('token_requests'),
                   builder: (context, tokenSnap) {
                     return StreamBuilder<QuerySnapshot>(
-                      stream: FirebaseFirestore.instance
-                          .collection('manual_transactions')
-                          .where('store_id', isEqualTo: selectedStoreId)
-                          .snapshots(),
+                      stream: _getStream('manual_transactions'),
                       builder: (context, manualSnap) {
                         if (transSnap.hasError || tokenSnap.hasError || manualSnap.hasError) {
                           return const Center(child: Text("Terjadi kesalahan memuat data."));
@@ -122,6 +231,7 @@ class StatsPage extends StatelessWidget {
                           'title': "Pemakaian - ${data['machine_name'] ?? 'Mesin'}",
                           'date': date,
                           'amountStr': "+ Rp ${_formatRupiahPositive(amount)}",
+                          'rawAmount': amount,
                           'isIncome': true,
                           'isManual': false,
                           'timestamp': data['timestamp'],
@@ -145,6 +255,7 @@ class StatsPage extends StatelessWidget {
                           'title': "Beli Token - ${data['package_name'] ?? 'Paket'}",
                           'date': date,
                           'amountStr': "- Rp ${_formatRupiahPositive(price)}",
+                          'rawAmount': price,
                           'isIncome': false,
                           'isManual': false,
                           'timestamp': data['created_at'],
@@ -195,105 +306,34 @@ class StatsPage extends StatelessWidget {
                       return timeB.compareTo(timeA);
                     });
 
-                    return SingleChildScrollView(
-                      padding: const EdgeInsets.all(24.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Saldo Utama
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(24),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(24),
-                              gradient: const LinearGradient(
-                                colors: [Color(0xFF60A5FA), Color(0xFF2563EB)],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: const Color(0xFF2563EB).withOpacity(0.3),
-                                  blurRadius: 15,
-                                  offset: const Offset(0, 8),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  "Total Balance",
-                                  style: TextStyle(color: Colors.white70, fontSize: 14),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  _formatRupiah(totalBalance),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 32,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 24),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    _buildIncomeExpenseMini(
-                                      title: "Income",
-                                      amount: _formatRupiah(totalIncome),
-                                      icon: Icons.arrow_downward,
-                                      color: const Color(0xFF10B981), // Hijau
-                                    ),
-                                    Container(width: 1, height: 40, color: Colors.white30),
-                                    _buildIncomeExpenseMini(
-                                      title: "Expense",
-                                      amount: _formatRupiah(totalExpense),
-                                      icon: Icons.arrow_upward,
-                                      color: const Color(0xFFEF4444), // Merah
-                                    ),
-                                  ],
-                                )
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 32),
+                    if (widget.userRole == 'Cashier') {
+                      final now = DateTime.now();
+                      allTransactions = allTransactions.where((t) {
+                        if (t['date'] == null) return false;
+                        DateTime date = t['date'] as DateTime;
+                        return date.year == now.year && date.month == now.month && date.day == now.day;
+                      }).toList();
+                      
+                      int todayQris = 0;
+                      int todayCash = 0;
+                      int todayExpense = 0;
 
-                          // Transaksi Terbaru
-                          Text(
-                            "Recent Transactions",
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: isDark ? Colors.white : const Color(0xFF1E293B),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          
-                          if (allTransactions.isEmpty)
-                            const Center(
-                              child: Padding(
-                                padding: EdgeInsets.all(32.0),
-                                child: Text("Belum ada transaksi", style: TextStyle(color: Colors.grey)),
-                              ),
-                            )
-                          else
-                            ...allTransactions.map((trx) {
-                              return _buildTransactionItem(
-                                context: context,
-                                title: trx['title'],
-                                date: trx['date'] != null ? _formatDate(trx['date']) : 'Unknown Date',
-                                amount: trx['amountStr'],
-                                rawAmount: trx['rawAmount'],
-                                docId: trx['docId'],
-                                isIncome: trx['isIncome'],
-                                isManual: trx['isManual'] ?? false,
-                                isDark: isDark,
-                              );
-                            }),
-                        ],
-                      ),
-                    );
+                      for (var t in allTransactions) {
+                        if (t['isIncome'] == true) {
+                          if (t['isManual'] == true) {
+                            todayCash += (t['rawAmount'] ?? 0) as int;
+                          } else {
+                            todayQris += (t['rawAmount'] ?? 0) as int;
+                          }
+                        } else {
+                          todayExpense += (t['rawAmount'] ?? 0) as int;
+                        }
+                      }
+                      
+                      return _buildCashierView(context, allTransactions, todayQris, todayCash, todayExpense, isDark);
+                    } else {
+                      return _buildOwnerView(context, allTransactions, totalIncome, totalExpense, totalBalance, isDark);
+                    }
                   },
                 );
               },
@@ -301,6 +341,202 @@ class StatsPage extends StatelessWidget {
           },
         ),
       ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCashierView(BuildContext context, List<Map<String, dynamic>> allTransactions, int todayQris, int todayCash, int todayExpense, bool isDark) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "Laporan Shift Hari Ini",
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: isDark ? Colors.white : const Color(0xFF1E293B),
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Ringkasan Kasir
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF1E293B) : Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                if (!isDark)
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+              ],
+            ),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text("Setoran Tunai (Manual)", style: TextStyle(color: Colors.grey)),
+                    Text(_formatRupiah(todayCash), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  ],
+                ),
+                const Divider(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text("Masuk ke QRIS (Sistem)", style: TextStyle(color: Colors.grey)),
+                    Text(_formatRupiah(todayQris), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.blue)),
+                  ],
+                ),
+                const Divider(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text("Pengeluaran (Kasbon dll)", style: TextStyle(color: Colors.grey)),
+                    Text(_formatRupiah(todayExpense), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.red)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 32),
+          Text(
+            "Riwayat Transaksi Shift Ini",
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: isDark ? Colors.white : const Color(0xFF1E293B),
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (allTransactions.isEmpty)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(32.0),
+                child: Text("Belum ada transaksi hari ini", style: TextStyle(color: Colors.grey)),
+              ),
+            )
+          else
+            ...allTransactions.map((trx) {
+              return _buildTransactionItem(
+                context: context,
+                title: trx['title'],
+                date: trx['date'] != null ? _formatDate(trx['date']) : 'Unknown Date',
+                amount: trx['amountStr'],
+                rawAmount: trx['rawAmount'],
+                docId: trx['docId'],
+                isIncome: trx['isIncome'],
+                isManual: trx['isManual'] ?? false,
+                isDark: isDark,
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOwnerView(BuildContext context, List<Map<String, dynamic>> allTransactions, int totalIncome, int totalExpense, int totalBalance, bool isDark) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Saldo Utama
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              gradient: const LinearGradient(
+                colors: [Color(0xFF60A5FA), Color(0xFF2563EB)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF2563EB).withOpacity(0.3),
+                  blurRadius: 15,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _selectedFilterStoreId == null ? "Laba Bersih Keseluruhan (Semua Cabang)" : "Laba Bersih Cabang",
+                  style: const TextStyle(color: Colors.white70, fontSize: 14),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _formatRupiah(totalBalance),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    _buildIncomeExpenseMini(
+                      title: "Pemasukan",
+                      amount: _formatRupiah(totalIncome),
+                      icon: Icons.arrow_downward,
+                      color: const Color(0xFF10B981), // Hijau
+                    ),
+                    Container(width: 1, height: 40, color: Colors.white30),
+                    _buildIncomeExpenseMini(
+                      title: "Pengeluaran",
+                      amount: _formatRupiah(totalExpense),
+                      icon: Icons.arrow_upward,
+                      color: const Color(0xFFEF4444), // Merah
+                    ),
+                  ],
+                )
+              ],
+            ),
+          ),
+          const SizedBox(height: 32),
+
+          // Transaksi Terbaru
+          Text(
+            "Recent Transactions",
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: isDark ? Colors.white : const Color(0xFF1E293B),
+            ),
+          ),
+          const SizedBox(height: 16),
+          
+          if (allTransactions.isEmpty)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(32.0),
+                child: Text("Belum ada transaksi", style: TextStyle(color: Colors.grey)),
+              ),
+            )
+          else
+            ...allTransactions.map((trx) {
+              return _buildTransactionItem(
+                context: context,
+                title: trx['title'],
+                date: trx['date'] != null ? _formatDate(trx['date']) : 'Unknown Date',
+                amount: trx['amountStr'],
+                rawAmount: trx['rawAmount'],
+                docId: trx['docId'],
+                isIncome: trx['isIncome'],
+                isManual: trx['isManual'] ?? false,
+                isDark: isDark,
+              );
+            }),
         ],
       ),
     );
@@ -615,7 +851,7 @@ class StatsPage extends StatelessWidget {
                           try {
                             if (docId == null) {
                               await FirebaseFirestore.instance.collection('manual_transactions').add({
-                                'store_id': selectedStoreId,
+                                'store_id': _selectedFilterStoreId ?? widget.selectedStoreId,
                                 'title': title,
                                 'amount': amount,
                                 'type': selectedType,

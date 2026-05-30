@@ -187,8 +187,8 @@ app.post('/delete-user', async (req, res) => {
 
 app.post('/pay-service', async (req, res) => {
     try {
-        const { price, store_id, customer_name, customer_phone, service_type, batch_id, quantity } = req.body;
-        console.log("💰 Request masuk untuk Service:", service_type, customer_name, "Qty:", quantity || 1);
+        const { price, store_id, customer_name, customer_phone, service_type, batch_id, quantity, wash_quantity, dry_quantity } = req.body;
+        console.log("💰 Request masuk untuk Service:", service_type, customer_name, "Qty:", quantity || 1, "Wash:", wash_quantity, "Dry:", dry_quantity);
 
         const orderId = 'SRV-' + Date.now();
 
@@ -209,8 +209,10 @@ app.post('/pay-service', async (req, res) => {
             store_id: store_id,
             customer_name: customer_name,
             customer_phone: customer_phone,
-            service_type: service_type, // 'Wash', 'Dry', 'Combo'
+            service_type: service_type, // 'Wash', 'Dry', 'Combo', 'Custom'
             quantity: quantity || 1,
+            wash_quantity: wash_quantity || 0,
+            dry_quantity: dry_quantity || 0,
             batch_id: batch_id,
             price: price,
             method: 'Midtrans',
@@ -220,7 +222,8 @@ app.post('/pay-service', async (req, res) => {
 
         res.json({
             token: transaction.token,
-            redirect_url: transaction.redirect_url
+            redirect_url: transaction.redirect_url,
+            order_id: orderId
         });
     } catch (err) {
         console.log("❌ ERROR:", err);
@@ -448,46 +451,60 @@ app.post('/midtrans-webhook', async (req, res) => {
                             await docRef.update({ status: 'Paid' });
 
                             const qty = data.quantity || 1;
+                            const washQty = data.wash_quantity !== undefined ? data.wash_quantity : (data.service_type === 'Wash' ? qty : (data.service_type === 'Combo' ? qty : 0));
+                            const dryQty = data.dry_quantity !== undefined ? data.dry_quantity : (data.service_type === 'Dry' ? qty : (data.service_type === 'Combo' ? qty : 0));
 
                             // 1. Potong token jika ada
                             if (data.batch_id) {
                                 const batchRef = db.collection('stores').doc(data.store_id).collection('token_batches').doc(data.batch_id);
                                 const batchDoc = await batchRef.get();
                                 if (batchDoc.exists && batchDoc.data().remaining_tokens > 0) {
-                                    // Jika Combo, potong 2 token, selain itu 1 token
-                                    const deduct = (data.service_type === 'Combo' ? -2 : -1) * qty;
-                                    await batchRef.update({
-                                        remaining_tokens: admin.firestore.FieldValue.increment(deduct)
-                                    });
+                                    // Potong token sebanyak total antrean
+                                    const deduct = -(washQty + dryQty);
+                                    if (deduct < 0) {
+                                        await batchRef.update({
+                                            remaining_tokens: admin.firestore.FieldValue.increment(deduct)
+                                        });
+                                    }
                                 }
                             }
 
-                            // 2. Buat antrean (Queue)
-                            const step = data.service_type === 'Combo' ? 'Wash' : data.service_type;
-                            for (let i = 0; i < qty; i++) {
+                            // 2. Buat antrean (Queue) untuk Washer
+                            for (let i = 0; i < washQty; i++) {
                                 await db.collection('queues').add({
                                     store_id: data.store_id,
                                     customer_name: data.customer_name,
                                     customer_phone: data.customer_phone,
                                     service_type: data.service_type,
-                                    step: step,
+                                    step: 'Wash',
                                     status: 'Pending', // Menunggu mesin kosong
                                     created_at: admin.firestore.FieldValue.serverTimestamp()
                                 });
                             }
 
-                            // 3. Catat transaksi (satu per layanan agar count di frontend tetap akurat)
-                            for (let i = 0; i < qty; i++) {
-                                await db.collection('transactions').add({
+                            // 2. Buat antrean (Queue) untuk Dryer
+                            for (let i = 0; i < dryQty; i++) {
+                                await db.collection('queues').add({
                                     store_id: data.store_id,
                                     customer_name: data.customer_name,
+                                    customer_phone: data.customer_phone,
                                     service_type: data.service_type,
-                                    payment_method: 'QRIS Midtrans',
-                                    amount: (data.price || 0) / qty,
-                                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                                    status: 'Completed',
+                                    step: 'Dry',
+                                    status: 'Pending', // Menunggu mesin kosong
+                                    created_at: admin.firestore.FieldValue.serverTimestamp()
                                 });
                             }
+
+                            // 3. Catat transaksi (Satu transaksi total untuk riwayat)
+                            await db.collection('transactions').add({
+                                store_id: data.store_id,
+                                customer_name: data.customer_name,
+                                service_type: data.service_type === 'Custom' ? `Cuci x${washQty}, Kering x${dryQty}` : data.service_type,
+                                payment_method: 'QRIS Midtrans',
+                                amount: data.price || 0,
+                                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                                status: 'Completed',
+                            });
 
                             console.log(`✅ Pembayaran Service sukses untuk ${data.customer_name}, mengecek ketersediaan mesin...`);
                             

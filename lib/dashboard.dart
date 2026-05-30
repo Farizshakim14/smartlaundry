@@ -258,7 +258,7 @@ class _DashboardPageState extends State<DashboardPage> {
       ),
       MachinePage(selectedStoreId: _selectedStoreId, userRole: _userRole ?? 'Unknown'),
       MasterPelangganPage(selectedStoreId: _selectedStoreId),
-      StatsPage(selectedStoreId: _selectedStoreId),
+      StatsPage(selectedStoreId: _selectedStoreId, userRole: _userRole ?? 'Unknown', myStores: _myStores),
       ProfilePage(selectedStoreId: _selectedStoreId),
     ];
 
@@ -496,6 +496,7 @@ class HomeTab extends StatelessWidget {
                       value: selectedStoreId,
                       icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
                       isDense: true,
+                      borderRadius: BorderRadius.circular(16),
                       dropdownColor: isDark ? const Color(0xFF0F172A) : Colors.white,
                       style: TextStyle(color: isDark ? Colors.white : const Color(0xFF1E293B), fontWeight: FontWeight.bold, fontSize: 14),
                       onChanged: onStoreChanged,

@@ -24,7 +24,7 @@ class _ActivityLogPageState extends State<ActivityLogPage> {
   @override
   void initState() {
     super.initState();
-    _selectedStoreId = widget.initialStoreId;
+    _selectedStoreId = widget.initialStoreId ?? 'ALL';
   }
 
   Widget _buildEmptyState(bool isDark) {
@@ -62,15 +62,24 @@ class _ActivityLogPageState extends State<ActivityLogPage> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9),
-                borderRadius: BorderRadius.circular(12),
+                color: isDark ? const Color(0xFF1E293B) : Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFF3B82F6).withOpacity(0.3)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(isDark ? 0.2 : 0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
               child: DropdownButtonHideUnderline(
                 child: DropdownButton<String>(
                   value: _selectedStoreId,
-                  icon: const Icon(Icons.filter_list, color: Color(0xFF64748B)),
+                  icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF3B82F6)),
                   dropdownColor: isDark ? const Color(0xFF1E293B) : Colors.white,
-                  style: TextStyle(color: isDark ? Colors.white : Colors.black),
+                  borderRadius: BorderRadius.circular(16),
+                  style: TextStyle(color: isDark ? Colors.white : const Color(0xFF1E293B), fontWeight: FontWeight.w600, fontSize: 14),
                   isDense: true,
                   items: [
                     const DropdownMenuItem(value: 'ALL', child: Text("Semua Toko")),

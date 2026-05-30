@@ -6,6 +6,9 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:aplikasilaundry/activity_service.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 class CustomerModePage extends StatefulWidget {
   final String storeId;
@@ -73,7 +76,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
     }
   }
 
-  Future<void> _payServiceQRIS(String customerName, String customerPhone, String serviceType, int price, int quantity) async {
+  Future<void> _payServiceQRIS(String customerName, String customerPhone, int washQty, int dryQty, int price) async {
     // 1. Cek ketersediaan token toko
     final snap = await FirebaseFirestore.instance
         .collection('stores')
@@ -83,7 +86,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
         .get();
 
     String? selectedBatchId;
-    int neededTokens = (serviceType == 'Combo' ? 2 : 1) * quantity;
+    int neededTokens = washQty + dryQty;
     for (var doc in snap.docs) {
       final data = doc.data();
       bool isExpired = false;
@@ -116,8 +119,9 @@ class _CustomerModePageState extends State<CustomerModePage> {
           'store_id': widget.storeId,
           'customer_name': customerName,
           'customer_phone': customerPhone,
-          'service_type': serviceType,
-          'quantity': quantity,
+          'service_type': 'Custom',
+          'wash_quantity': washQty,
+          'dry_quantity': dryQty,
           'batch_id': selectedBatchId,
         }),
       );
@@ -127,11 +131,12 @@ class _CustomerModePageState extends State<CustomerModePage> {
       if (response.statusCode == 200) {
         await ActivityService.logActivity(
           storeId: widget.storeId,
-          action: "Pelanggan $customerName memproses pesanan layanan $serviceType via QRIS",
+          action: "Pelanggan $customerName memproses pesanan layanan Cuci x$washQty Kering x$dryQty via QRIS",
         );
 
         final responseData = jsonDecode(response.body);
         final redirectUrl = responseData['redirect_url'];
+        final orderId = responseData['order_id'];
         
         if (redirectUrl != null) {
           final uri = Uri.parse(redirectUrl);
@@ -139,6 +144,12 @@ class _CustomerModePageState extends State<CustomerModePage> {
             await launchUrl(uri, mode: LaunchMode.externalApplication);
           }
         }
+
+        // Tampilkan dialog menunggu pembayaran & struk
+        if (orderId != null) {
+          _waitForPaymentAndShowReceipt(orderId, customerName, washQty, dryQty, price);
+        }
+
       } else {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal mendapatkan QRIS: ${response.body}")));
       }
@@ -146,6 +157,197 @@ class _CustomerModePageState extends State<CustomerModePage> {
       if (mounted) Navigator.pop(context); // Tutup loading
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal menghubungi server: $e")));
     }
+  }
+
+  void _waitForPaymentAndShowReceipt(String orderId, String customerName, int washQty, int dryQty, int price) {
+    // Tampilkan dialog loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              const Text("Menunggu Pembayaran...", style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              const Text("Silakan selesaikan pembayaran di Midtrans. Struk akan muncul otomatis setelah berhasil.", textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context); // Batal menunggu
+                },
+                child: const Text("Tutup Jendela Ini"),
+              )
+            ],
+          ),
+        );
+      }
+    );
+
+    // Listen ke Firestore
+    StreamSubscription<DocumentSnapshot>? sub;
+    sub = FirebaseFirestore.instance.collection('service_requests').doc(orderId).snapshots().listen((doc) {
+      if (doc.exists && doc.data() != null) {
+        final data = doc.data() as Map<String, dynamic>;
+        if (data['status'] == 'Paid') {
+          // Tutup loading
+          sub?.cancel();
+          if (mounted) {
+            Navigator.pop(context); // Tutup dialog menunggu
+            _showReceiptDialog(orderId, customerName, washQty, dryQty, price);
+          }
+        }
+      }
+    });
+  }
+
+  void _showReceiptDialog(String orderId, String customerName, int washQty, int dryQty, int price) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) {
+        return AlertDialog(
+          contentPadding: EdgeInsets.zero,
+          content: Container(
+            width: 300,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.check_circle, color: Colors.green, size: 48),
+                const SizedBox(height: 8),
+                const Text("Pembayaran Berhasil!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                const SizedBox(height: 16),
+                const Divider(),
+                Text("Pesanan: $orderId", style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text("Pelanggan:"),
+                    Text(customerName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (washQty > 0)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text("Cuci (Washer):"),
+                      Text("x$washQty"),
+                    ],
+                  ),
+                if (dryQty > 0)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text("Kering (Dryer):"),
+                      Text("x$dryQty"),
+                    ],
+                  ),
+                const Divider(),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text("Total Bayar:", style: TextStyle(fontWeight: FontWeight.bold)),
+                    Text("Rp ${NumberFormat('#,###', 'id_ID').format(price)}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    _printReceipt(orderId, customerName, washQty, dryQty, price);
+                  },
+                  icon: const Icon(Icons.print, color: Colors.white),
+                  label: const Text("Print Struk (58mm)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    minimumSize: const Size(double.infinity, 44),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("Tutup", style: TextStyle(color: Colors.grey)),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    );
+  }
+
+  Future<void> _printReceipt(String orderId, String customerName, int washQty, int dryQty, int price) async {
+    final pdf = pw.Document();
+    
+    // Set ukuran kertas ke 58mm (Roll57)
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.roll57,
+        build: (pw.Context context) {
+          return pw.Container(
+            width: double.infinity,
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.center,
+              mainAxisSize: pw.MainAxisSize.min,
+              children: [
+                pw.Text("SMART LAUNDRY", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14)),
+                pw.SizedBox(height: 4),
+                pw.Text(DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now()), style: const pw.TextStyle(fontSize: 8)),
+                pw.Text("ID: $orderId", style: const pw.TextStyle(fontSize: 8)),
+                pw.Divider(),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text("Pelanggan:", style: const pw.TextStyle(fontSize: 10)),
+                    pw.Text(customerName, style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+                  ]
+                ),
+                pw.SizedBox(height: 4),
+                if (washQty > 0)
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text("Cuci", style: const pw.TextStyle(fontSize: 10)),
+                      pw.Text("x$washQty", style: const pw.TextStyle(fontSize: 10)),
+                    ]
+                  ),
+                if (dryQty > 0)
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text("Kering", style: const pw.TextStyle(fontSize: 10)),
+                      pw.Text("x$dryQty", style: const pw.TextStyle(fontSize: 10)),
+                    ]
+                  ),
+                pw.Divider(),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text("TOTAL:", style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
+                    pw.Text("Rp ${NumberFormat('#,###', 'id_ID').format(price)}", style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
+                  ]
+                ),
+                pw.SizedBox(height: 12),
+                pw.Text("Terima Kasih", style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+                pw.Text("Harap simpan struk ini", style: const pw.TextStyle(fontSize: 8)),
+              ]
+            )
+          );
+        }
+      )
+    );
+
+    // Langsung print melalui dialog browser (Print package otomatis menangani flutter web)
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async => pdf.save(),
+      name: 'Struk-$orderId',
+      format: PdfPageFormat.roll57, // Paksa layout ke roll57
+    );
   }
 
   void _showOrderDialog(int defaultWashPrice, int defaultDryPrice) async {
@@ -173,15 +375,12 @@ class _CustomerModePageState extends State<CustomerModePage> {
         final nameController = TextEditingController();
         final phoneController = TextEditingController();
         String selectedRealPhone = '';
-        String selectedService = 'Wash'; // Default
-        int quantity = 1; // Default
+        int washQty = 1; // Default
+        int dryQty = 0; // Default
         
         return StatefulBuilder(
           builder: (context, setStateBuilder) {
-            int currentPrice = 0;
-            if (selectedService == 'Wash') currentPrice = defaultWashPrice * quantity;
-            if (selectedService == 'Dry') currentPrice = defaultDryPrice * quantity;
-            if (selectedService == 'Combo') currentPrice = (defaultWashPrice + defaultDryPrice) * quantity;
+            int currentPrice = (defaultWashPrice * washQty) + (defaultDryPrice * dryQty);
 
             return AlertDialog(
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -252,52 +451,70 @@ class _CustomerModePageState extends State<CustomerModePage> {
                         ),
                       ),
                       const SizedBox(height: 24),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text("Pilih Layanan:", style: TextStyle(fontWeight: FontWeight.bold)),
-                          Row(
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.remove_circle_outline, color: Colors.blue),
-                                onPressed: quantity > 1 ? () => setStateBuilder(() => quantity--) : null,
-                              ),
-                              Text("$quantity", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                              IconButton(
-                                icon: const Icon(Icons.add_circle_outline, color: Colors.blue),
-                                onPressed: () => setStateBuilder(() => quantity++),
-                              ),
-                            ],
-                          )
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      RadioListTile<String>(
-                        title: const Text("Cuci Saja"),
-                        subtitle: Text("Rp ${NumberFormat('#,###', 'id_ID').format(defaultWashPrice)}"),
-                        value: 'Wash',
-                        groupValue: selectedService,
-                        onChanged: (val) {
-                          setStateBuilder(() => selectedService = val!);
-                        },
-                      ),
-                      RadioListTile<String>(
-                        title: const Text("Pengering Saja"),
-                        subtitle: Text("Rp ${NumberFormat('#,###', 'id_ID').format(defaultDryPrice)}"),
-                        value: 'Dry',
-                        groupValue: selectedService,
-                        onChanged: (val) {
-                          setStateBuilder(() => selectedService = val!);
-                        },
-                      ),
-                      RadioListTile<String>(
-                        title: const Text("Cuci + Pengering"),
-                        subtitle: Text("Rp ${NumberFormat('#,###', 'id_ID').format(defaultWashPrice + defaultDryPrice)}"),
-                        value: 'Combo',
-                        groupValue: selectedService,
-                        onChanged: (val) {
-                          setStateBuilder(() => selectedService = val!);
-                        },
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Column(
+                          children: [
+                            // Row Wash
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text("Cuci (Washer)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                    Text("Rp ${NumberFormat('#,###', 'id_ID').format(defaultWashPrice)}", style: const TextStyle(color: Colors.grey)),
+                                  ],
+                                ),
+                                Row(
+                                  children: [
+                                    IconButton(
+                                      icon: Icon(Icons.remove_circle_outline, color: washQty > 0 ? Colors.blue : Colors.grey),
+                                      onPressed: washQty > 0 ? () => setStateBuilder(() => washQty--) : null,
+                                    ),
+                                    Text("$washQty", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                                    IconButton(
+                                      icon: const Icon(Icons.add_circle_outline, color: Colors.blue),
+                                      onPressed: () => setStateBuilder(() => washQty++),
+                                    ),
+                                  ],
+                                )
+                              ],
+                            ),
+                            const Divider(height: 24),
+                            // Row Dry
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text("Kering (Dryer)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                    Text("Rp ${NumberFormat('#,###', 'id_ID').format(defaultDryPrice)}", style: const TextStyle(color: Colors.grey)),
+                                  ],
+                                ),
+                                Row(
+                                  children: [
+                                    IconButton(
+                                      icon: Icon(Icons.remove_circle_outline, color: dryQty > 0 ? Colors.blue : Colors.grey),
+                                      onPressed: dryQty > 0 ? () => setStateBuilder(() => dryQty--) : null,
+                                    ),
+                                    Text("$dryQty", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                                    IconButton(
+                                      icon: const Icon(Icons.add_circle_outline, color: Colors.blue),
+                                      onPressed: () => setStateBuilder(() => dryQty++),
+                                    ),
+                                  ],
+                                )
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                       const SizedBox(height: 16),
                       Container(
@@ -345,9 +562,14 @@ class _CustomerModePageState extends State<CustomerModePage> {
                         });
                       }
 
+                      if (washQty == 0 && dryQty == 0) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pilih minimal 1 layanan Cuci atau Kering")));
+                        return;
+                      }
+
                       if (mounted) {
                         Navigator.pop(context); // Tutup form dialog
-                        _payServiceQRIS(name, phone, selectedService, currentPrice, quantity);
+                        _payServiceQRIS(name, phone, washQty, dryQty, currentPrice);
                       }
                     }
                   },
