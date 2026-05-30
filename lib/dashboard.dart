@@ -12,7 +12,6 @@ import 'package:aplikasilaundry/token_management.dart';
 import 'package:aplikasilaundry/store_management.dart';
 import 'package:aplikasilaundry/customer_mode.dart';
 import 'package:aplikasilaundry/customer_mode.dart';
-import 'package:aplikasilaundry/welcome_page.dart';
 import 'package:audioplayers/audioplayers.dart';
 
 class DashboardPage extends StatefulWidget {
@@ -34,41 +33,15 @@ class _DashboardPageState extends State<DashboardPage> {
   StreamSubscription<QuerySnapshot>? _notificationSubscription;
   StreamSubscription<QuerySnapshot>? _userSubscription;
   StreamSubscription<QuerySnapshot>? _storeSubscription;
-  StreamSubscription<User?>? _authSubscription;
-  String? _currentUid;
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isInitialNotificationLoad = true;
 
   @override
   void initState() {
     super.initState();
-    _currentUid = FirebaseAuth.instance.currentUser?.uid;
     _setupUserAndStoreListeners();
     _autoStopTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
       _checkAndAutoStopMachines();
-    });
-
-    _authSubscription = FirebaseAuth.instance.userChanges().listen((user) {
-      if (!mounted) return;
-      if (user == null) {
-        // User logged out in another tab
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (context) => const WelcomePage()),
-          (route) => false,
-        );
-      } else if (user.uid != _currentUid) {
-        // User switched accounts in another tab
-        setState(() {
-          _currentUid = user.uid;
-          _isLoading = true;
-          _userRole = null;
-          _userName = null;
-          _selectedStoreId = null;
-          _myStores = [];
-        });
-        _setupUserAndStoreListeners();
-      }
     });
   }
 
@@ -78,7 +51,6 @@ class _DashboardPageState extends State<DashboardPage> {
     _notificationSubscription?.cancel();
     _userSubscription?.cancel();
     _storeSubscription?.cancel();
-    _authSubscription?.cancel();
     _audioPlayer.dispose();
     super.dispose();
   }
