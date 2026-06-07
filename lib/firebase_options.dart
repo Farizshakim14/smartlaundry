@@ -23,20 +23,11 @@ class DefaultFirebaseOptions {
       case TargetPlatform.android:
         return android;
       case TargetPlatform.iOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for ios - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return ios;
       case TargetPlatform.macOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for macos - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return macos;
       case TargetPlatform.windows:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for windows - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return windows;
       case TargetPlatform.linux:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for linux - '
@@ -50,20 +41,47 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyBYhtTHfN3AO5r7oGfGo-1iWJGdyisyGl8',
-    appId: '1:473391268077:web:fc197655d31fd8e2828ce4',
-    messagingSenderId: '473391268077',
-    projectId: 'monitoringlaundry',
-    authDomain: 'monitoringlaundry.firebaseapp.com',
-    storageBucket: 'monitoringlaundry.firebasestorage.app',
-    measurementId: 'G-TC2B0FQKXX',
+    apiKey: 'AIzaSyCSZ4CEI259wLP7wbAdFFDELWIsRkeoyTg',
+    appId: '1:996988566077:web:8666b13eab896c24954854',
+    messagingSenderId: '996988566077',
+    projectId: 'monitoringlaundry-adba4',
+    authDomain: 'monitoringlaundry-adba4.firebaseapp.com',
+    storageBucket: 'monitoringlaundry-adba4.firebasestorage.app',
+    measurementId: 'G-LCM75KHLSC',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyCBHYVzUFSUFirwo21AL_DFUwyyssm_pFs',
-    appId: '1:473391268077:android:6787d2131dd40cbe828ce4',
-    messagingSenderId: '473391268077',
-    projectId: 'monitoringlaundry',
-    storageBucket: 'monitoringlaundry.firebasestorage.app',
+    apiKey: 'AIzaSyBEu9nuMeqjh_rQ5q-_XoH1LniJwPK8P6U',
+    appId: '1:996988566077:android:e3389cb733bd429b954854',
+    messagingSenderId: '996988566077',
+    projectId: 'monitoringlaundry-adba4',
+    storageBucket: 'monitoringlaundry-adba4.firebasestorage.app',
+  );
+  static const FirebaseOptions macos = FirebaseOptions(
+    apiKey: 'AIzaSyC4yfOQAknbb5ROrWCSaynlvnL9xNP869Y',
+    appId: '1:996988566077:ios:6f79a029ff6009d7954854',
+    messagingSenderId: '996988566077',
+    projectId: 'monitoringlaundry-adba4',
+    storageBucket: 'monitoringlaundry-adba4.firebasestorage.app',
+    iosBundleId: 'com.example.aplikasilaundry',
+  );
+
+  static const FirebaseOptions ios = FirebaseOptions(
+    apiKey: 'AIzaSyC4yfOQAknbb5ROrWCSaynlvnL9xNP869Y',
+    appId: '1:996988566077:ios:6f79a029ff6009d7954854',
+    messagingSenderId: '996988566077',
+    projectId: 'monitoringlaundry-adba4',
+    storageBucket: 'monitoringlaundry-adba4.firebasestorage.app',
+    iosBundleId: 'com.example.aplikasilaundry',
+  );
+
+  static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyCSZ4CEI259wLP7wbAdFFDELWIsRkeoyTg',
+    appId: '1:996988566077:web:a9422fc4cb51d42d954854',
+    messagingSenderId: '996988566077',
+    projectId: 'monitoringlaundry-adba4',
+    authDomain: 'monitoringlaundry-adba4.firebaseapp.com',
+    storageBucket: 'monitoringlaundry-adba4.firebasestorage.app',
+    measurementId: 'G-10YYL1HWF3',
   );
 }

@@ -1,43 +1,42 @@
 {
   "project_info": {
-    "project_number": "473391268077",
-    "firebase_url": "https://monitoringlaundry-default-rtdb.firebaseio.com",
-    "project_id": "monitoringlaundry",
-    "storage_bucket": "monitoringlaundry.firebasestorage.app"
+    "project_number": "996988566077",
+    "firebase_url": "https://monitoringlaundry-adba4-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "monitoringlaundry-adba4",
+    "storage_bucket": "monitoringlaundry-adba4.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:473391268077:android:6787d2131dd40cbe828ce4",
+        "mobilesdk_app_id": "1:996988566077:android:e3389cb733bd429b954854",
         "android_client_info": {
           "package_name": "com.example.aplikasilaundry"
         }
       },
       "oauth_client": [
         {
-          "client_id": "473391268077-4n8s7flnjmnovtfl8h48t2uniuu87bnq.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.example.aplikasilaundry",
-            "certificate_hash": "0754ea2fe2ccbaf893c675c1d210f56681c9777c"
-          }
-        },
-        {
-          "client_id": "473391268077-tpliee32kvp7rfo6lpn8ru401rs7jt9t.apps.googleusercontent.com",
+          "client_id": "996988566077-khbdfdkmb9rnf54opjc705v629d3oh05.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyCBHYVzUFSUFirwo21AL_DFUwyyssm_pFs"
+          "current_key": "AIzaSyBEu9nuMeqjh_rQ5q-_XoH1LniJwPK8P6U"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "473391268077-tpliee32kvp7rfo6lpn8ru401rs7jt9t.apps.googleusercontent.com",
+              "client_id": "996988566077-khbdfdkmb9rnf54opjc705v629d3oh05.apps.googleusercontent.com",
               "client_type": 3
+            },
+            {
+              "client_id": "996988566077-eokuddp5t5d3hb9ub856j2j7l8bdfb38.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.aplikasilaundry"
+              }
             }
           ]
         }
