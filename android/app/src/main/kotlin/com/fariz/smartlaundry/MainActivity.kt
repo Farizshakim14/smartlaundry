@@ -1,4 +1,4 @@
-package com.example.aplikasilaundry
+package com.fariz.smartlaundry
 
 import io.flutter.embedding.android.FlutterActivity
 

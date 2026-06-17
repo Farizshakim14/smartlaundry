@@ -15,6 +15,8 @@ class MachinePage extends StatefulWidget {
 }
 
 class _MachinePageState extends State<MachinePage> {
+  String _searchQuery = '';
+  String _selectedFilter = 'Semua';
 
   void _showPlayMachineDialog(String machineId, Map<String, dynamic> machine) {
     if (widget.selectedStoreId == null) return;
@@ -319,7 +321,43 @@ class _MachinePageState extends State<MachinePage> {
           if (await canLaunchUrl(uri)) {
             await launchUrl(uri, mode: LaunchMode.externalApplication);
             if (mounted) {
-               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Menunggu pembayaran. Mesin akan otomatis menyala setelah dibayar.")));
+               showDialog(
+                 context: context,
+                 barrierDismissible: false,
+                 builder: (context) {
+                   return AlertDialog(
+                     content: Column(
+                       mainAxisSize: MainAxisSize.min,
+                       children: [
+                         const CircularProgressIndicator(),
+                         const SizedBox(height: 16),
+                         const Text("Menunggu Pembayaran...", style: TextStyle(fontWeight: FontWeight.bold)),
+                         const SizedBox(height: 8),
+                         const Text("Silakan selesaikan pembayaran di Midtrans. Mesin akan otomatis menyala setelah berhasil.", textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
+                         const SizedBox(height: 16),
+                         ElevatedButton.icon(
+                           onPressed: () async {
+                             if (await canLaunchUrl(uri)) {
+                               await launchUrl(uri, mode: LaunchMode.externalApplication);
+                             }
+                           },
+                           icon: const Icon(Icons.payment, color: Colors.white),
+                           label: const Text("Buka Halaman Pembayaran", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                           style: ElevatedButton.styleFrom(
+                             backgroundColor: const Color(0xFF10B981), // Hijau Midtrans
+                             minimumSize: const Size(double.infinity, 44),
+                           ),
+                         ),
+                         const SizedBox(height: 16),
+                         TextButton(
+                           onPressed: () => Navigator.pop(context),
+                           child: const Text("Tutup Jendela Ini"),
+                         )
+                       ],
+                     ),
+                   );
+                 }
+               );
             }
           }
         }
@@ -428,363 +466,469 @@ class _MachinePageState extends State<MachinePage> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    
     return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
       body: SafeArea(
         child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  "Manage Machines",
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : const Color(0xFF1E293B),
-                  ),
-                ),
-                Container(
-                  decoration: BoxDecoration(
-                    color: isDark ? const Color(0xFF1E293B) : Colors.white,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      if (!isDark)
-                        BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "Mesin",
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w900,
+                          color: isDark ? Colors.white : const Color(0xFF0F172A),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      StreamBuilder<QuerySnapshot>(
+                        stream: FirebaseFirestore.instance.collection('machines').where('store_id', isEqualTo: widget.selectedStoreId).snapshots(),
+                        builder: (context, snapshot) {
+                          if (!snapshot.hasData) return const SizedBox.shrink();
+                          int offlineCount = 0;
+                          for (var doc in snapshot.data!.docs) {
+                            final m = doc.data() as Map<String, dynamic>;
+                            if (m['status'] == 'Offline') offlineCount++;
+                          }
+                          
+                          if (offlineCount == 0) {
+                            return Row(
+                              children: [
+                                const Icon(Icons.wifi, color: Color(0xFF10B981), size: 16),
+                                const SizedBox(width: 6),
+                                const Text(
+                                  "Semua Perangkat Online",
+                                  style: TextStyle(
+                                    color: Color(0xFF10B981),
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            );
+                          } else {
+                            return Row(
+                              children: [
+                                const Icon(Icons.wifi_off, color: Colors.red, size: 16),
+                                const SizedBox(width: 6),
+                                Text(
+                                  "$offlineCount Perangkat Offline",
+                                  style: const TextStyle(
+                                    color: Colors.red,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            );
+                          }
+                        },
+                      ),
                     ],
                   ),
-                  child: IconButton(
-                    icon: Icon(Icons.search, color: isDark ? Colors.white : const Color(0xFF1E293B)),
-                    onPressed: () {},
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: widget.selectedStoreId == null
-              ? const Center(child: Text("Silakan pilih toko di Dashboard terlebih dahulu.", style: TextStyle(color: Colors.grey)))
-              : StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('machines').where('store_id', isEqualTo: widget.selectedStoreId).snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.local_laundry_service_outlined, size: 80, color: Colors.grey[300]),
-                  const SizedBox(height: 16),
-                  Text(
-                    "No machines added yet", 
-                    style: TextStyle(color: Colors.grey[500], fontSize: 16, fontWeight: FontWeight.w600),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF1E293B) : Colors.white,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: isDark ? Colors.grey[800]! : const Color(0xFFE2E8F0)),
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.filter_alt_outlined, color: Color(0xFF64748B)),
+                      onPressed: () {},
+                    ),
                   ),
                 ],
               ),
-            );
-          }
+            ),
 
-          final machines = snapshot.data!.docs;
-
-          return Column(
-            children: [
-              StreamBuilder(
-                stream: Stream.periodic(const Duration(seconds: 1)),
-                builder: (context, _) {
-                  double totalAmpere = 0;
-                  double totalKwh = 0;
-                  int activeCount = 0;
-
-                  for (var doc in machines) {
-                    final m = doc.data() as Map<String, dynamic>;
-                    if (m['status'] == 'Active') {
-                      activeCount++;
-                      double amp = 0.0;
-                      if (m['current_ampere'] != null) {
-                        amp = (m['current_ampere'] as num).toDouble();
-                      }
-                      totalAmpere += amp;
-
-                      if (m['start_time'] != null) {
-                        final startTime = (m['start_time'] as Timestamp).toDate();
-                        final elapsedHours = DateTime.now().difference(startTime).inSeconds / 3600.0;
-                        totalKwh += ((amp * 220) / 1000.0) * elapsedHours;
-                      }
-                    }
-                  }
-
-                  final totalWatt = totalAmpere * 220;
-
-                  return Container(
-                    margin: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFF2563EB).withOpacity(0.3),
-                          blurRadius: 15,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text("Total Beban Listrik", style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600)),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
-                              child: Text("$activeCount Mesin Aktif", style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text("Daya Saat Ini", style: TextStyle(color: Colors.white70, fontSize: 12)),
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.flash_on, color: Colors.orangeAccent, size: 20),
-                                    const SizedBox(width: 4),
-                                    Text("${totalWatt.toStringAsFixed(0)} W", style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                                  ],
-                                ),
-                              ],
-                            ),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                const Text("Estimasi Energi", style: TextStyle(color: Colors.white70, fontSize: 12)),
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    Text("${totalKwh.toStringAsFixed(3)} ", style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                                    const Text("kWh", style: TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold)),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-              Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  itemCount: machines.length,
-            itemBuilder: (context, index) {
-              final doc = machines[index];
-              final machine = doc.data() as Map<String, dynamic>;
-              final isWasher = machine['type'] == 'Washer';
-              
-              // Memberikan default value agar tidak terjadi error jika data di Firestore belum lengkap
-              final name = machine['name']?.toString() ?? 'Unknown Machine';
-              final type = machine['type']?.toString() ?? 'Unknown';
-              final status = machine['status']?.toString() ?? 'Idle';
-              
-              return Container(
-                margin: const EdgeInsets.only(bottom: 16),
-                padding: const EdgeInsets.all(16),
+            // Search Bar
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Container(
                 decoration: BoxDecoration(
                   color: isDark ? const Color(0xFF1E293B) : Colors.white,
                   borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    if (!isDark)
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.03),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                  ],
+                  border: Border.all(color: isDark ? Colors.grey[800]! : const Color(0xFFE2E8F0)),
                 ),
-                child: Row(
-                  children: [
-                    // Ikon Mesin
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: (isWasher ? const Color(0xFF2563EB) : const Color(0xFF10B981)).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        isWasher ? Icons.local_laundry_service : Icons.dry_cleaning,
-                        color: isWasher ? const Color(0xFF2563EB) : const Color(0xFF10B981),
-                        size: 32,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    // Detail Mesin
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            name,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: isDark ? Colors.white : const Color(0xFF1E293B),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            type,
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: isDark ? Colors.grey[400] : Colors.grey[600],
-                            ),
-                          ),
-                          if (status == 'Active') ...[
-                            const SizedBox(height: 8),
-                            StreamBuilder(
-                              stream: Stream.periodic(const Duration(seconds: 1)),
-                              builder: (context, _) {
-                                // Mengambil arus dari database, cast ke double jika bisa
-                                double currentAmpere = 0.0;
-                                if (machine['current_ampere'] != null) {
-                                  currentAmpere = (machine['current_ampere'] as num).toDouble();
-                                }
-                                
-                                final watt = currentAmpere * 220; // Asumsi tegangan 220V
-                                
-                                double kwh = 0.0;
-                                if (machine['start_time'] != null) {
-                                  final startTime = (machine['start_time'] as Timestamp).toDate();
-                                  final elapsedSeconds = DateTime.now().difference(startTime).inSeconds;
-                                  final elapsedHours = elapsedSeconds / 3600.0;
-                                  kwh = (watt / 1000.0) * elapsedHours;
-                                }
+                child: TextField(
+                  style: TextStyle(color: isDark ? Colors.white : Colors.black),
+                  onChanged: (val) {
+                    setState(() {
+                      _searchQuery = val.toLowerCase();
+                    });
+                  },
+                  decoration: const InputDecoration(
+                    hintText: "Cari mesin...",
+                    hintStyle: TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
+                    prefixIcon: Icon(Icons.search, color: Color(0xFF94A3B8)),
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+            ),
+            
+            const SizedBox(height: 16),
 
-                                return Column(
+            // Firebase Stream
+            Expanded(
+              child: widget.selectedStoreId == null
+                  ? const Center(child: Text("Pilih toko di Dashboard terlebih dahulu."))
+                  : StreamBuilder<QuerySnapshot>(
+                      stream: FirebaseFirestore.instance.collection('machines').where('store_id', isEqualTo: widget.selectedStoreId).snapshots(),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState == ConnectionState.waiting) {
+                          return const Center(child: CircularProgressIndicator());
+                        }
+                        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                          return const Center(child: Text("Tidak ada mesin."));
+                        }
+
+                        final allMachines = snapshot.data!.docs;
+                        int washerCount = 0;
+                        int dryerCount = 0;
+                        
+                        List<QueryDocumentSnapshot> filteredList = [];
+                        for (var doc in allMachines) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          final type = data['type']?.toString() ?? 'Washer';
+                          final name = data['name']?.toString() ?? '';
+                          
+                          if (type == 'Washer') washerCount++;
+                          else if (type == 'Dryer') dryerCount++;
+
+                          if (_searchQuery.isNotEmpty && !name.toLowerCase().contains(_searchQuery)) {
+                            continue;
+                          }
+
+                          if (_selectedFilter != 'Semua' && type != _selectedFilter) {
+                            continue;
+                          }
+
+                          filteredList.add(doc);
+                        }
+
+                        // Filter Chips
+                        return Column(
+                          children: [
+                            SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              padding: const EdgeInsets.symmetric(horizontal: 24),
+                              child: Row(
+                                children: [
+                                  _buildFilterChip('Semua', 'Semua (${allMachines.length})'),
+                                  const SizedBox(width: 8),
+                                  _buildFilterChip('Washer', 'Washer ($washerCount)'),
+                                  const SizedBox(width: 8),
+                                  _buildFilterChip('Dryer', 'Dryer ($dryerCount)'),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Expanded(
+                              child: SingleChildScrollView(
+                                padding: const EdgeInsets.symmetric(horizontal: 24),
+                                child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Row(
-                                      children: [
-                                        const Icon(Icons.flash_on, color: Colors.orange, size: 14),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          "Daya: ${currentAmpere.toStringAsFixed(2)} A (${watt.toStringAsFixed(0)} Watt)",
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w600,
-                                            color: isDark ? Colors.orange[300] : Colors.orange[800],
-                                          ),
+                                    if (_selectedFilter == 'Semua' || _selectedFilter == 'Washer') ...[
+                                      if (_selectedFilter == 'Semua')
+                                        Padding(
+                                          padding: const EdgeInsets.only(bottom: 12),
+                                          child: Text("WASHER", style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.grey[400] : const Color(0xFF475569), fontSize: 13, letterSpacing: 1.0)),
                                         ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Row(
-                                      children: [
-                                        const Icon(Icons.battery_charging_full, color: Colors.green, size: 14),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          "Energi: ${kwh.toStringAsFixed(4)} kWh",
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w600,
-                                            color: isDark ? Colors.green[300] : Colors.green[800],
-                                          ),
+                                      _buildGrid(filteredList.where((d) => (d.data() as Map<String,dynamic>)['type'] == 'Washer').toList()),
+                                      const SizedBox(height: 24),
+                                    ],
+                                    if (_selectedFilter == 'Semua' || _selectedFilter == 'Dryer') ...[
+                                      if (_selectedFilter == 'Semua')
+                                        Padding(
+                                          padding: const EdgeInsets.only(bottom: 12),
+                                          child: Text("DRYER", style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.grey[400] : const Color(0xFF475569), fontSize: 13, letterSpacing: 1.0)),
                                         ),
-                                      ],
-                                    ),
+                                      _buildGrid(filteredList.where((d) => (d.data() as Map<String,dynamic>)['type'] == 'Dryer').toList()),
+                                      const SizedBox(height: 24),
+                                    ],
                                   ],
-                                );
-                              }
+                                ),
+                              ),
                             ),
                           ],
-                        ],
-                      ),
+                        );
+                      },
                     ),
-                    // Status
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: status == 'Active' ? const Color(0xFF10B981).withOpacity(0.1) : Colors.grey[200],
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        status,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: status == 'Active' ? const Color(0xFF10B981) : Colors.grey[600],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    // Action Buttons
-                    if (status == 'Idle')
-                      IconButton(
-                        icon: const Icon(Icons.play_circle_fill, color: Color(0xFF2563EB), size: 36),
-                        onPressed: () => _showPlayMachineDialog(doc.id, machine),
-                      )
-                    else if (status == 'Active')
-                      IconButton(
-                        icon: const Icon(Icons.stop_circle, color: Colors.red, size: 36),
-                        onPressed: () => _stopMachine(doc.id, name),
-                      ),
-                    if (widget.userRole == 'Superadmin' || widget.userRole == 'Admin')
-                      PopupMenuButton<String>(
-                        icon: Icon(Icons.more_vert, color: isDark ? Colors.grey[400] : Colors.grey[600]),
-                        onSelected: (value) {
-                          if (value == 'edit') {
-                            _showAddMachineDialog(machineId: doc.id, initialData: machine);
-                          } else if (value == 'delete') {
-                            _confirmDeleteMachine(doc.id, name);
-                          }
-                        },
-                        itemBuilder: (context) => [
-                          const PopupMenuItem(value: 'edit', child: Text("Edit")),
-                          const PopupMenuItem(value: 'delete', child: Text("Hapus")),
-                        ],
-                      ),
-                  ],
-                ),
-              );
-            },
-          ),
-          ),
+            ),
           ],
-          );
-        },
-      ),
-      ),
-      ],
-      ),
+        ),
       ),
       floatingActionButton: (widget.userRole == 'Superadmin' || widget.userRole == 'Admin') 
-          ? FloatingActionButton.extended(
+          ? FloatingActionButton(
               onPressed: () => _showAddMachineDialog(),
               backgroundColor: const Color(0xFF2563EB),
-              icon: const Icon(Icons.add, color: Colors.white),
-              label: const Text("Add Machine", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              child: const Icon(Icons.add, color: Colors.white),
             )
           : null,
     );
   }
+
+  Widget _buildFilterChip(String filterValue, String label) {
+    bool isSelected = _selectedFilter == filterValue;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _selectedFilter = filterValue;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF2563EB) : (isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9)),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : (isDark ? Colors.grey[300] : const Color(0xFF475569)),
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGrid(List<QueryDocumentSnapshot> docs) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    if (docs.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(16.0),
+        child: Center(child: Text("Tidak ada mesin untuk kategori ini.", style: TextStyle(color: Colors.grey))),
+      );
+    }
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: 0.72,
+      ),
+      itemCount: docs.length,
+      itemBuilder: (context, index) {
+        final doc = docs[index];
+        final machine = doc.data() as Map<String, dynamic>;
+        final name = machine['name']?.toString() ?? 'Machine';
+        final status = machine['status']?.toString() ?? 'Idle';
+        
+        return Container(
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1E293B) : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: isDark ? Colors.grey[800]! : const Color(0xFFE2E8F0)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.02),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Header Card
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            name,
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: isDark ? Colors.white : const Color(0xFF1E293B)),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Row(
+                          children: [
+                            Icon(
+                              status == 'Active' ? Icons.circle : (status == 'Idle' ? Icons.radio_button_unchecked : Icons.circle),
+                              color: status == 'Active' ? const Color(0xFF10B981) : (status == 'Idle' ? const Color(0xFF10B981) : Colors.red),
+                              size: 10,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              status,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: status == 'Active' ? const Color(0xFF10B981) : (status == 'Idle' ? const Color(0xFF64748B) : Colors.red),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    // Image and Timer info
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Image.asset('assets/machine_card_icon.png', width: 45, fit: BoxFit.contain),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                if (status == 'Idle') ...[
+                                  const Text("Siap digunakan", textAlign: TextAlign.center, style: TextStyle(fontSize: 10, color: Color(0xFF64748B), fontWeight: FontWeight.w500)),
+                                ] else if (status == 'Offline') ...[
+                                  const Text("ESP32 tidak terhubung", textAlign: TextAlign.center, style: TextStyle(fontSize: 10, color: Color(0xFF64748B), fontWeight: FontWeight.w500)),
+                                ] else if (status == 'Active') ...[
+                                  StreamBuilder(
+                                    stream: Stream.periodic(const Duration(seconds: 1)),
+                                    builder: (context, _) {
+                                      String timeStr = "Active";
+                                      if (machine['timer_enabled'] == true && machine['start_time'] != null && machine['duration_minutes'] != null) {
+                                        final start = (machine['start_time'] as Timestamp).toDate();
+                                        final duration = machine['duration_minutes'] as int;
+                                        final end = start.add(Duration(minutes: duration));
+                                        final diff = end.difference(DateTime.now());
+                                        if (diff.isNegative) {
+                                          timeStr = "00:00:00";
+                                        } else {
+                                          final h = diff.inHours.toString().padLeft(2, '0');
+                                          final m = diff.inMinutes.remainder(60).toString().padLeft(2, '0');
+                                          final s = diff.inSeconds.remainder(60).toString().padLeft(2, '0');
+                                          timeStr = "$h:$m:$s";
+                                        }
+                                      } else {
+                                        if (machine['start_time'] != null) {
+                                          final start = (machine['start_time'] as Timestamp).toDate();
+                                          final diff = DateTime.now().difference(start);
+                                          final h = diff.inHours.toString().padLeft(2, '0');
+                                          final m = diff.inMinutes.remainder(60).toString().padLeft(2, '0');
+                                          final s = diff.inSeconds.remainder(60).toString().padLeft(2, '0');
+                                          timeStr = "$h:$m:$s";
+                                        }
+                                      }
+                                      double currentAmpere = 0.0;
+                                      if (machine['current_ampere'] != null) {
+                                        currentAmpere = (machine['current_ampere'] as num).toDouble();
+                                      }
+                                      final watt = currentAmpere * 220; // Asumsi 220V
+                                      double kwh = 0.0;
+                                      if (machine['start_time'] != null) {
+                                        final start = (machine['start_time'] as Timestamp).toDate();
+                                        final elapsedHours = DateTime.now().difference(start).inSeconds / 3600.0;
+                                        kwh = (watt / 1000.0) * elapsedHours;
+                                      }
+
+                                      return Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Text(
+                                            timeStr,
+                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: isDark ? Colors.white : const Color(0xFF0F172A)),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text("${currentAmpere.toStringAsFixed(1)}A / ${watt.toStringAsFixed(0)}W", style: const TextStyle(fontSize: 9, color: Colors.orange, fontWeight: FontWeight.bold)),
+                                          Text("${kwh.toStringAsFixed(3)} kWh", style: const TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold)),
+                                        ],
+                                      );
+                                    }
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // Action Button
+                    SizedBox(
+                      width: double.infinity,
+                      height: 32,
+                      child: status == 'Idle' 
+                          ? OutlinedButton(
+                              onPressed: () => _showPlayMachineDialog(doc.id, machine),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Color(0xFF2563EB)),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                padding: EdgeInsets.zero,
+                              ),
+                              child: const Text("START", style: TextStyle(color: Color(0xFF2563EB), fontSize: 11, fontWeight: FontWeight.bold)),
+                            )
+                          : (status == 'Active'
+                              ? ElevatedButton(
+                                  onPressed: () => _stopMachine(doc.id, name),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFFEF4444),
+                                    elevation: 0,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                    padding: EdgeInsets.zero,
+                                  ),
+                                  child: const Text("STOP", style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                                )
+                              : OutlinedButton(
+                                  onPressed: () {},
+                                  style: OutlinedButton.styleFrom(
+                                    side: const BorderSide(color: Color(0xFF64748B)),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                    padding: EdgeInsets.zero,
+                                  ),
+                                  child: const Text("RESTART", style: TextStyle(color: Color(0xFF475569), fontSize: 11, fontWeight: FontWeight.bold)),
+                                )
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              // Menu Options Overlay
+              if (widget.userRole == 'Superadmin' || widget.userRole == 'Admin')
+                Positioned(
+                  top: 0,
+                  right: -10,
+                  child: PopupMenuButton<String>(
+                    padding: EdgeInsets.zero,
+                    icon: const Icon(Icons.more_vert, size: 16, color: Color(0xFF94A3B8)),
+                    onSelected: (value) {
+                      if (value == 'edit') {
+                        _showAddMachineDialog(machineId: doc.id, initialData: machine);
+                      } else if (value == 'delete') {
+                        _confirmDeleteMachine(doc.id, name);
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(value: 'edit', child: Text("Edit")),
+                      const PopupMenuItem(value: 'delete', child: Text("Hapus")),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }
+
 
 // Komponen Formulir Tambah Mesin
 class AddMachineForm extends StatefulWidget {

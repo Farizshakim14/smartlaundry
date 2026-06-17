@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:aplikasilaundry/main.dart';
 import 'package:aplikasilaundry/editprofile.dart';
 import 'package:aplikasilaundry/change_password.dart';
+import 'package:aplikasilaundry/localization.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -174,7 +175,7 @@ class _SettingsPageState extends State<SettingsPage> {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text("Pengaturan", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(AppLocalizations.tr('settings'), style: const TextStyle(fontWeight: FontWeight.bold)),
         elevation: 0,
         backgroundColor: Theme.of(context).appBarTheme.backgroundColor ?? Colors.white,
         foregroundColor: Theme.of(context).appBarTheme.foregroundColor ?? const Color(0xFF1E293B),
@@ -185,9 +186,9 @@ class _SettingsPageState extends State<SettingsPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Status Verifikasi
-            _buildSectionTitle("Status Verifikasi"),
+            _buildSectionTitle(AppLocalizations.tr('verification_status')),
             _buildVerificationCard(
-              title: "Email",
+              title: AppLocalizations.tr('email'),
               subtitle: user?.email ?? "-",
               isVerified: isEmailVerified,
               onVerify: _sendEmailVerification,
@@ -195,8 +196,8 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             const SizedBox(height: 12),
             _buildVerificationCard(
-              title: "WhatsApp / Nomor HP",
-              subtitle: phoneNumber != null && phoneNumber!.isNotEmpty ? phoneNumber! : "Belum diatur",
+              title: AppLocalizations.tr('phone_number'),
+              subtitle: phoneNumber != null && phoneNumber!.isNotEmpty ? phoneNumber! : AppLocalizations.tr('not_set'),
               isVerified: isPhoneVerified,
               onVerify: _verifyPhoneNumber,
               icon: Icons.phone_android_outlined,
@@ -205,17 +206,17 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 32),
 
             // Akun
-            _buildSectionTitle("Akun"),
+            _buildSectionTitle(AppLocalizations.tr('account')),
             _buildSettingsMenu(
               icon: Icons.person_outline,
-              title: "Edit Profile",
+              title: AppLocalizations.tr('edit_profile'),
               onTap: () {
                 Navigator.push(context, MaterialPageRoute(builder: (context) => const EditProfilePage()));
               },
             ),
             _buildSettingsMenu(
               icon: Icons.lock_outline,
-              title: "Ubah Password",
+              title: AppLocalizations.tr('change_password'),
               onTap: () {
                 Navigator.push(context, MaterialPageRoute(builder: (context) => const ChangePasswordPage()));
               },
@@ -224,16 +225,18 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 32),
 
             // Aplikasi
-            _buildSectionTitle("Aplikasi"),
+            _buildSectionTitle(AppLocalizations.tr('application')),
             _buildSettingsMenu(
               icon: Icons.language,
-              title: "Bahasa",
-              trailing: const Text("Indonesia", style: TextStyle(color: Colors.grey)),
-              onTap: () {},
+              title: AppLocalizations.tr('language'),
+              trailing: Text(AppLocalizations.currentLanguage.value == 'id' ? AppLocalizations.tr('indonesian') : AppLocalizations.tr('english'), style: const TextStyle(color: Colors.grey)),
+              onTap: () {
+                _showLanguageDialog();
+              },
             ),
             _buildSettingsMenu(
               icon: isDark ? Icons.dark_mode : Icons.light_mode,
-              title: "Mode Gelap (Dark Mode)",
+              title: AppLocalizations.tr('dark_mode'),
               trailing: Switch(
                 value: isDark,
                 activeColor: const Color(0xFF2563EB),
@@ -304,7 +307,7 @@ class _SettingsPageState extends State<SettingsPage> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(color: Colors.green.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
-              child: const Text("Verified", style: TextStyle(color: Colors.green, fontSize: 12, fontWeight: FontWeight.bold)),
+              child: Text(AppLocalizations.tr('verified'), style: const TextStyle(color: Colors.green, fontSize: 12, fontWeight: FontWeight.bold)),
             )
           else
             ElevatedButton(
@@ -315,7 +318,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
               ),
               onPressed: onVerify,
-              child: const Text("Verifikasi"),
+              child: Text(AppLocalizations.tr('verify')),
             ),
         ],
       ),
@@ -346,6 +349,35 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
             if (trailing != null) trailing else Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey[400]),
+          ],
+        ),
+      ),
+    );
+  }
+  void _showLanguageDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(AppLocalizations.tr('language')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text(AppLocalizations.tr('indonesian')),
+              trailing: AppLocalizations.currentLanguage.value == 'id' ? const Icon(Icons.check, color: Colors.blue) : null,
+              onTap: () {
+                AppLocalizations.changeLanguage('id');
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              title: Text(AppLocalizations.tr('english')),
+              trailing: AppLocalizations.currentLanguage.value == 'en' ? const Icon(Icons.check, color: Colors.blue) : null,
+              onTap: () {
+                AppLocalizations.changeLanguage('en');
+                Navigator.pop(context);
+              },
+            ),
           ],
         ),
       ),

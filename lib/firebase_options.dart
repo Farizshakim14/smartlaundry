@@ -46,15 +46,17 @@ class DefaultFirebaseOptions {
     messagingSenderId: '996988566077',
     projectId: 'monitoringlaundry-adba4',
     authDomain: 'monitoringlaundry-adba4.firebaseapp.com',
+    databaseURL: 'https://monitoringlaundry-adba4-default-rtdb.asia-southeast1.firebasedatabase.app',
     storageBucket: 'monitoringlaundry-adba4.firebasestorage.app',
     measurementId: 'G-LCM75KHLSC',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyBEu9nuMeqjh_rQ5q-_XoH1LniJwPK8P6U',
-    appId: '1:996988566077:android:e3389cb733bd429b954854',
+    appId: '1:996988566077:android:d330348b1b58bdbb954854',
     messagingSenderId: '996988566077',
     projectId: 'monitoringlaundry-adba4',
+    databaseURL: 'https://monitoringlaundry-adba4-default-rtdb.asia-southeast1.firebasedatabase.app',
     storageBucket: 'monitoringlaundry-adba4.firebasestorage.app',
   );
   static const FirebaseOptions macos = FirebaseOptions(
@@ -62,17 +64,23 @@ class DefaultFirebaseOptions {
     appId: '1:996988566077:ios:6f79a029ff6009d7954854',
     messagingSenderId: '996988566077',
     projectId: 'monitoringlaundry-adba4',
+    databaseURL: 'https://monitoringlaundry-adba4-default-rtdb.asia-southeast1.firebasedatabase.app',
     storageBucket: 'monitoringlaundry-adba4.firebasestorage.app',
+    androidClientId: '996988566077-ru9ulihak7slu400i26ifh3v3v7tihnd.apps.googleusercontent.com',
+    iosClientId: '996988566077-eokuddp5t5d3hb9ub856j2j7l8bdfb38.apps.googleusercontent.com',
     iosBundleId: 'com.example.aplikasilaundry',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyC4yfOQAknbb5ROrWCSaynlvnL9xNP869Y',
-    appId: '1:996988566077:ios:6f79a029ff6009d7954854',
+    appId: '1:996988566077:ios:3f74a2e5b6d61572954854',
     messagingSenderId: '996988566077',
     projectId: 'monitoringlaundry-adba4',
+    databaseURL: 'https://monitoringlaundry-adba4-default-rtdb.asia-southeast1.firebasedatabase.app',
     storageBucket: 'monitoringlaundry-adba4.firebasestorage.app',
-    iosBundleId: 'com.example.aplikasilaundry',
+    androidClientId: '996988566077-ru9ulihak7slu400i26ifh3v3v7tihnd.apps.googleusercontent.com',
+    iosClientId: '996988566077-sicaarthfm0eng6fv23tboj0d3nb4qi8.apps.googleusercontent.com',
+    iosBundleId: 'com.fariz.smartlaundry',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
@@ -81,6 +89,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '996988566077',
     projectId: 'monitoringlaundry-adba4',
     authDomain: 'monitoringlaundry-adba4.firebaseapp.com',
+    databaseURL: 'https://monitoringlaundry-adba4-default-rtdb.asia-southeast1.firebasedatabase.app',
     storageBucket: 'monitoringlaundry-adba4.firebasestorage.app',
     measurementId: 'G-10YYL1HWF3',
   );

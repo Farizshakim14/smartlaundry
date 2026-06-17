@@ -8,12 +8,20 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:996988566077:android:e3389cb733bd429b954854",
+        "mobilesdk_app_id": "1:996988566077:android:d330348b1b58bdbb954854",
         "android_client_info": {
-          "package_name": "com.example.aplikasilaundry"
+          "package_name": "com.fariz.smartlaundry"
         }
       },
       "oauth_client": [
+        {
+          "client_id": "996988566077-ru9ulihak7slu400i26ifh3v3v7tihnd.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.fariz.smartlaundry",
+            "certificate_hash": "0754ea2fe2ccbaf893c675c1d210f56681c9777c"
+          }
+        },
         {
           "client_id": "996988566077-khbdfdkmb9rnf54opjc705v629d3oh05.apps.googleusercontent.com",
           "client_type": 3

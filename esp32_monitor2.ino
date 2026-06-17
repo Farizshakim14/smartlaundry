@@ -1,6 +1,6 @@
 /*
  * ESP32 LAUNDRY MONITOR - UNIT 2 (Mesin 3 & 4)
- * Server: 103.150.226.111:80
+ * Server: 192.168.18.15:3000
  * Device: esp32_002
  */
 
@@ -12,20 +12,20 @@
 const char* server_ip = "103.150.226.111";
 const char* ssid = "Laundry Coin";
 const char* password = "2025*12*20";
-const int server_port = 80;
+const int server_port = 3000;
 const char* device_id = "esp32_002";
 const char* API_PREFIX = "/api/esp32";
 
 // Hardware pins — BERBEDA dengan Unit 1
 const int CURRENT_PIN_1 = 34;
 const int CURRENT_PIN_2 = 35;
-const int RELAY_1 = 25;   // GPIO 25 (berbeda Unit 1)
-const int RELAY_2 = 26;   // GPIO 26 (berbeda Unit 1)
+const int RELAY_1 = 25;
+const int RELAY_2 = 26;
 const int LED_PIN = 2;
 
 // Machine ID untuk Unit 2
-const int MACHINE_ID_1 = 3;  // Washer 2
-const int MACHINE_ID_2 = 4;  // Dryer 2
+const int MACHINE_ID_1 = 1;  // Washer 2
+const int MACHINE_ID_2 = 2;  // Dryer 2
 
 // Kalibrasi sensor
 const float ADC_VOLTAGE_REF = 3.3;
@@ -398,7 +398,7 @@ void setup() {
   Serial.println("\n========================================");
   Serial.println("  ESP32 LAUNDRY MONITOR - UNIT 2 v3.4");
   Serial.println("  Device: esp32_002 | Machines: 3 & 4");
-  Serial.println("  Server: 103.150.226.111:80");
+  Serial.println("  Server: 192.168.18.15:3000");
   Serial.println("========================================");
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);

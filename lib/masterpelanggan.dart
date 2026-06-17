@@ -12,6 +12,8 @@ class MasterPelangganPage extends StatefulWidget {
 }
 
 class _MasterPelangganPageState extends State<MasterPelangganPage> {
+  String _searchQuery = '';
+  String _selectedFilter = 'Semua';
 
   void _showCustomerDialog({String? docId, Map<String, dynamic>? customerData}) {
     if (widget.selectedStoreId == null) {
@@ -54,6 +56,7 @@ class _MasterPelangganPageState extends State<MasterPelangganPage> {
             child: const Text("Batal"),
           ),
           ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () async {
               await FirebaseFirestore.instance.collection('pelanggan').doc(docId).delete();
               await ActivityService.logActivity(
@@ -62,188 +65,382 @@ class _MasterPelangganPageState extends State<MasterPelangganPage> {
               );
               if (mounted) Navigator.pop(context);
             },
-            child: const Text("Hapus"),
+            child: const Text("Hapus", style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
     );
   }
 
+  void _showActionMenu(String docId, Map<String, dynamic> customer) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(margin: const EdgeInsets.symmetric(vertical: 12), height: 4, width: 40, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(4))),
+            ListTile(
+              leading: const Icon(Icons.wechat_rounded, color: Color(0xFF25D366)),
+              title: const Text("Hubungi via WhatsApp", style: TextStyle(fontWeight: FontWeight.bold)),
+              onTap: () async {
+                Navigator.pop(context);
+                String phone = customer['phone']?.toString() ?? '';
+                if (phone.isNotEmpty) {
+                  if (phone.startsWith("0")) phone = "62${phone.substring(1)}";
+                  final url = Uri.parse("https://wa.me/$phone");
+                  await launchUrl(url, mode: LaunchMode.externalApplication);
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit, color: Color(0xFF2563EB)),
+              title: const Text("Edit Data Pelanggan", style: TextStyle(fontWeight: FontWeight.bold)),
+              onTap: () {
+                Navigator.pop(context);
+                _showCustomerDialog(docId: docId, customerData: customer);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete, color: Color(0xFFEF4444)),
+              title: const Text("Hapus Pelanggan", style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.bold)),
+              onTap: () {
+                Navigator.pop(context);
+                _confirmDelete(docId, customer['name']?.toString() ?? 'Pelanggan');
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatDate(DateTime dt) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    return "${dt.day} ${months[dt.month - 1]} ${dt.year}";
+  }
+
+  Widget _buildFilterChip(String filterValue, String label) {
+    bool isSelected = _selectedFilter == filterValue;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _selectedFilter = filterValue;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF4F46E5) : Colors.transparent, // Indigo blue pill
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : const Color(0xFF475569),
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
     return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      backgroundColor: const Color(0xFFF8FAFC),
       body: SafeArea(
         child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  "Master Pelanggan",
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : const Color(0xFF1E293B),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    "Pelanggan",
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () => _showCustomerDialog(),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF4F46E5), // Indigo blue color
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.add, color: Colors.white, size: 24),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Search Bar
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: TextField(
+                  onChanged: (val) {
+                    setState(() {
+                      _searchQuery = val.toLowerCase();
+                    });
+                  },
+                  decoration: const InputDecoration(
+                    hintText: "Cari pelanggan...",
+                    hintStyle: TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
+                    prefixIcon: Icon(Icons.search, color: Color(0xFF94A3B8)),
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.symmetric(vertical: 14),
                   ),
                 ),
-              ],
+              ),
             ),
-          ),
-          Expanded(
-            child: widget.selectedStoreId == null
-              ? const Center(child: Text("Silakan pilih toko di Dashboard terlebih dahulu.", style: TextStyle(color: Colors.grey)))
-              : StreamBuilder<QuerySnapshot>(
-                  stream: FirebaseFirestore.instance.collection('transactions').where('store_id', isEqualTo: widget.selectedStoreId).snapshots(),
-                  builder: (context, txSnapshot) {
-                    Map<String, Map<String, int>> customerUsage = {};
-                    if (txSnapshot.hasData) {
-                      for (var doc in txSnapshot.data!.docs) {
-                        final data = doc.data() as Map<String, dynamic>;
-                        final cName = data['customer_name'] as String?;
-                        final sType = data['service_type'] as String?;
-                        
-                        if (cName != null && sType != null) {
-                          if (!customerUsage.containsKey(cName)) {
-                            customerUsage[cName] = {'wash': 0, 'dry': 0};
-                          }
-                          if (sType == 'Wash') {
-                            customerUsage[cName]!['wash'] = customerUsage[cName]!['wash']! + 1;
-                          } else if (sType == 'Dry') {
-                            customerUsage[cName]!['dry'] = customerUsage[cName]!['dry']! + 1;
-                          } else if (sType == 'Combo') {
-                            customerUsage[cName]!['wash'] = customerUsage[cName]!['wash']! + 1;
-                            customerUsage[cName]!['dry'] = customerUsage[cName]!['dry']! + 1;
+            
+            const SizedBox(height: 16),
+
+            // Filter Pills
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Row(
+                children: [
+                  _buildFilterChip('Semua', 'Semua'),
+                  const SizedBox(width: 8),
+                  _buildFilterChip('Pelanggan Aktif', 'Pelanggan Aktif'),
+                  const SizedBox(width: 8),
+                  _buildFilterChip('Pelanggan Baru', 'Pelanggan Baru'),
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: 16),
+
+            Expanded(
+              child: widget.selectedStoreId == null
+                ? const Center(child: Text("Silakan pilih toko di Dashboard terlebih dahulu.", style: TextStyle(color: Colors.grey)))
+                : StreamBuilder<QuerySnapshot>(
+                    stream: FirebaseFirestore.instance.collection('transactions').where('store_id', isEqualTo: widget.selectedStoreId).snapshots(),
+                    builder: (context, txSnapshot) {
+                      Map<String, Map<String, int>> customerUsage = {};
+                      Map<String, DateTime> lastTransaction = {};
+                      
+                      if (txSnapshot.hasData) {
+                        for (var doc in txSnapshot.data!.docs) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          final cName = data['customer_name'] as String?;
+                          final sType = data['service_type'] as String?;
+                          final ts = data['timestamp'] as Timestamp?;
+                          
+                          if (cName != null) {
+                            if (!customerUsage.containsKey(cName)) {
+                              customerUsage[cName] = {'wash': 0, 'dry': 0};
+                            }
+                            if (sType == 'Wash') {
+                              customerUsage[cName]!['wash'] = customerUsage[cName]!['wash']! + 1;
+                            } else if (sType == 'Dry') {
+                              customerUsage[cName]!['dry'] = customerUsage[cName]!['dry']! + 1;
+                            } else if (sType == 'Combo') {
+                              customerUsage[cName]!['wash'] = customerUsage[cName]!['wash']! + 1;
+                              customerUsage[cName]!['dry'] = customerUsage[cName]!['dry']! + 1;
+                            }
+                            
+                            if (ts != null) {
+                              final dt = ts.toDate();
+                              if (!lastTransaction.containsKey(cName) || dt.isAfter(lastTransaction[cName]!)) {
+                                lastTransaction[cName] = dt;
+                              }
+                            }
                           }
                         }
                       }
-                    }
 
-                    return StreamBuilder<QuerySnapshot>(
-                      stream: FirebaseFirestore.instance.collection('pelanggan').where('store_id', isEqualTo: widget.selectedStoreId).snapshots(),
-                      builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return const Center(child: Text("Belum ada pelanggan"));
-          }
+                      return StreamBuilder<QuerySnapshot>(
+                        stream: FirebaseFirestore.instance.collection('pelanggan').where('store_id', isEqualTo: widget.selectedStoreId).snapshots(),
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState == ConnectionState.waiting) {
+                            return const Center(child: CircularProgressIndicator());
+                          }
+                          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                            return const Center(child: Text("Belum ada pelanggan"));
+                          }
 
-          final customers = snapshot.data!.docs;
+                          final allCustomers = snapshot.data!.docs;
+                          
+                          // Filter logic
+                          List<QueryDocumentSnapshot> filteredList = [];
+                          for (var doc in allCustomers) {
+                            final customer = doc.data() as Map<String, dynamic>;
+                            final name = customer['name']?.toString() ?? '';
+                            
+                            // Search Filter
+                            if (_searchQuery.isNotEmpty && !name.toLowerCase().contains(_searchQuery)) {
+                              continue;
+                            }
+                            
+                            int wCount = customerUsage[name]?['wash'] ?? 0;
+                            int dCount = customerUsage[name]?['dry'] ?? 0;
+                            int totalUsage = wCount + dCount;
+                            
+                            // Category Filter
+                            if (_selectedFilter == 'Pelanggan Aktif' && totalUsage == 0) {
+                              continue;
+                            }
+                            if (_selectedFilter == 'Pelanggan Baru' && totalUsage > 0) {
+                              continue;
+                            }
+                            
+                            filteredList.add(doc);
+                          }
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(24),
-            itemCount: customers.length,
-            itemBuilder: (context, index) {
-              final doc = customers[index];
-              final customer = doc.data() as Map<String, dynamic>;
-              final docId = doc.id;
+                          return ListView.builder(
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                            itemCount: filteredList.length,
+                            itemBuilder: (context, index) {
+                              final doc = filteredList[index];
+                              final customer = doc.data() as Map<String, dynamic>;
+                              final docId = doc.id;
+                              final cName = customer['name']?.toString() ?? 'Tanpa Nama';
+                              final phone = customer['phone']?.toString() ?? '-';
+                              
+                              int washCount = customerUsage[cName]?['wash'] ?? 0;
+                              int dryCount = customerUsage[cName]?['dry'] ?? 0;
+                              
+                              String pillText;
+                              Color pillColor;
+                              Color pillBgColor;
 
-              return Container(
-                margin: const EdgeInsets.only(bottom: 16),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF1E293B) : Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    if (!isDark)
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.03),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      backgroundColor: const Color(0xFF2563EB).withOpacity(0.1),
-                      child: Text(customer['name']?.toString().isNotEmpty == true ? customer['name'].toString()[0].toUpperCase() : '?'),
-                    ),
-
-                    const SizedBox(width: 16),
-
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(customer['name']?.toString() ?? 'Tanpa Nama', style: TextStyle(color: isDark ? Colors.white : Colors.black, fontWeight: FontWeight.bold)),
-                          Text(customer['phone']?.toString() ?? '-', style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600])),
-                          const SizedBox(height: 6),
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(color: Colors.blue.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
-                                child: Text("Washer: ${customerUsage[customer['name']]?['wash'] ?? 0}x", style: const TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.w600)),
-                              ),
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(color: Colors.orange.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
-                                child: Text("Dryer: ${customerUsage[customer['name']]?['dry'] ?? 0}x", style: const TextStyle(fontSize: 11, color: Colors.orange, fontWeight: FontWeight.w600)),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.wechat_rounded, color: Color(0xFF25D366)),
-                          onPressed: () async {
-                            String phone = customer['phone']?.toString() ?? '';
-                            if (phone.isNotEmpty) {
-                              if (phone.startsWith("0")) {
-                                phone = "62${phone.substring(1)}";
+                              if (washCount == 0 && dryCount == 0) {
+                                pillText = "Belum Transaksi";
+                                pillColor = const Color(0xFFEF4444); // Red
+                                pillBgColor = const Color(0xFFEF4444).withOpacity(0.1);
+                              } else if (washCount > 0 && dryCount == 0) {
+                                pillText = "${washCount}x Cuci";
+                                pillColor = washCount >= 5 ? const Color(0xFF10B981) : const Color(0xFFF59E0B);
+                                pillBgColor = washCount >= 5 ? const Color(0xFF10B981).withOpacity(0.1) : const Color(0xFFF59E0B).withOpacity(0.1);
+                              } else if (washCount == 0 && dryCount > 0) {
+                                pillText = "${dryCount}x Kering";
+                                pillColor = const Color(0xFFF59E0B);
+                                pillBgColor = const Color(0xFFF59E0B).withOpacity(0.1);
+                              } else {
+                                pillText = "${washCount}x Cuci + ${dryCount}x Kering";
+                                pillColor = const Color(0xFFF59E0B);
+                                pillBgColor = const Color(0xFFF59E0B).withOpacity(0.1);
                               }
+                              
+                              Color statusColor = (washCount + dryCount) > 0 ? const Color(0xFF10B981) : const Color(0xFFF59E0B);
 
-                              final url = Uri.parse("https://wa.me/$phone");
-                              await launchUrl(url, mode: LaunchMode.externalApplication);
-                            }
-                          },
-                        ),
-
-                        PopupMenuButton<String>(
-                          onSelected: (value) {
-                            if (value == 'edit') {
-                              _showCustomerDialog(docId: docId, customerData: customer);
-                            } else {
-                              _confirmDelete(docId, customer['name']?.toString() ?? 'Pelanggan');
-                            }
-                          },
-                          itemBuilder: (context) => const [
-                            PopupMenuItem(value: 'edit', child: Text("Edit")),
-                            PopupMenuItem(value: 'delete', child: Text("Hapus")),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              );
-            },
+                              return GestureDetector(
+                                onTap: () => _showActionMenu(docId, customer),
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 16),
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(color: const Color(0xFFF1F5F9)),
+                                    boxShadow: [
+                                      BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4)),
+                                    ],
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Stack(
+                                            children: [
+                                              CircleAvatar(
+                                                radius: 24,
+                                                backgroundColor: const Color(0xFF4F46E5).withOpacity(0.1),
+                                                child: Text(cName.isNotEmpty ? cName[0].toUpperCase() : '?', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF4F46E5))),
+                                              ),
+                                              Positioned(
+                                                right: 0,
+                                                bottom: 0,
+                                                child: Container(
+                                                  width: 14,
+                                                  height: 14,
+                                                  decoration: BoxDecoration(
+                                                    color: statusColor,
+                                                    shape: BoxShape.circle,
+                                                    border: Border.all(color: Colors.white, width: 2),
+                                                  ),
+                                                ),
+                                              )
+                                            ],
+                                          ),
+                                          const SizedBox(width: 16),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(cName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF0F172A))),
+                                                const SizedBox(height: 2),
+                                                Text(phone, style: const TextStyle(color: Color(0xFF64748B), fontSize: 13, fontWeight: FontWeight.w500)),
+                                              ],
+                                            ),
+                                          ),
+                                          const Icon(Icons.chevron_right, color: Color(0xFF94A3B8)),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                const Text("Token", style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w500)),
+                                                const SizedBox(height: 6),
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                                  decoration: BoxDecoration(color: pillBgColor, borderRadius: BorderRadius.circular(6)),
+                                                  child: Text(pillText, style: TextStyle(color: pillColor, fontWeight: FontWeight.bold, fontSize: 12)),
+                                                )
+                                              ],
+                                            ),
+                                          ),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                const Text("Terakhir Transaksi", style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w500)),
+                                                const SizedBox(height: 6),
+                                                Text(lastTransaction[cName] != null ? _formatDate(lastTransaction[cName]!) : "-", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF1E293B))),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
                           );
                         },
                       );
                   },
                 ),
-      ),
-      ],
-      ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showCustomerDialog(),
-        label: const Text("Tambah Pelanggan"),
-        icon: const Icon(Icons.person_add),
+            ),
+          ],
+        ),
       ),
     );
   }

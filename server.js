@@ -38,11 +38,11 @@ app.post('/upload-logo', logoUpload.single('logo'), (req, res) => {
     if (!req.file) {
         return res.status(400).json({ success: false, message: 'Tidak ada file yang diunggah' });
     }
-    
+
     // Ganti dengan IP VPS yang sebenarnya saat deploy
     const serverUrl = 'http://103.150.226.111:3000';
     const fileUrl = `${serverUrl}/uploads/${req.file.filename}`;
-    
+
     res.json({ success: true, url: fileUrl });
 });
 
@@ -73,7 +73,7 @@ db.collection('machines').onSnapshot(snapshot => {
         // Pemetaan berdasarkan nama mesin
         let espMachineId = 0;
         const mName = (data.name || "").toLowerCase();
-        
+
         if (mName.includes('washer 1')) espMachineId = 1;
         else if (mName.includes('dryer 1')) espMachineId = 2;
         else if (mName.includes('washer 2')) espMachineId = 3;
@@ -95,6 +95,7 @@ db.collection('machines').onSnapshot(snapshot => {
                     command_id: commandIdCounter++,
                     machine_id: espMachineId,
                     command: currentStatus === 'Active' ? 'START' : 'STOP',
+                    duration_minutes: data.duration_minutes || 0,
                     firestore_doc_id: machineId
                 });
 
@@ -168,12 +169,12 @@ app.post('/delete-user', async (req, res) => {
         if (!email) {
             return res.status(400).json({ success: false, message: 'Email tidak diberikan' });
         }
-        
+
         console.log(`🗑️ Menerima request penghapusan auth untuk email: ${email}`);
         const userRecord = await admin.auth().getUserByEmail(email);
         await admin.auth().deleteUser(userRecord.uid);
         console.log(`✅ User auth ${email} berhasil dihapus.`);
-        
+
         res.json({ success: true, message: `User ${email} terhapus dari Auth` });
     } catch (err) {
         if (err.code === 'auth/user-not-found') {
@@ -252,7 +253,7 @@ async function assignMachines(storeId) {
 
         for (const qDoc of queueSnap.docs) {
             const queue = qDoc.data();
-            
+
             // Tentukan mesin apa yang dibutuhkan
             let neededType = null;
             if (queue.service_type === 'Wash' || (queue.service_type === 'Combo' && queue.step === 'Wash')) {
@@ -276,7 +277,7 @@ async function assignMachines(storeId) {
 
 async function assignToMachine(queueId, machine, queue) {
     console.log(`✅ Mengalokasikan Mesin ${machine.name} untuk Pelanggan ${queue.customer_name}`);
-    
+
     // Ubah status mesin menjadi Ready
     await db.collection('machines').doc(machine.id).update({
         status: 'Ready',
@@ -396,7 +397,7 @@ app.post('/midtrans-webhook', async (req, res) => {
                         const data = docSnap.data();
                         if (data.status === 'Pending') {
                             await docRef.update({ status: 'Approved' });
-                            
+
                             // 1. Potong token dari batchId
                             if (data.batch_id) {
                                 const batchRef = db.collection('stores').doc(data.store_id).collection('token_batches').doc(data.batch_id);
@@ -407,7 +408,7 @@ app.post('/midtrans-webhook', async (req, res) => {
                                     });
                                 }
                             }
-                            
+
                             // 2. Aktifkan mesin
                             await db.collection('machines').doc(data.machine_id).update({
                                 status: 'Active',
@@ -444,7 +445,7 @@ app.post('/midtrans-webhook', async (req, res) => {
                     // ALUR PEMBAYARAN SERVICE BARU (QUEUE)
                     const docRef = db.collection('service_requests').doc(orderId);
                     const docSnap = await docRef.get();
-                    
+
                     if (docSnap.exists) {
                         const data = docSnap.data();
                         if (data.status === 'Pending Payment') {
@@ -507,7 +508,7 @@ app.post('/midtrans-webhook', async (req, res) => {
                             });
 
                             console.log(`✅ Pembayaran Service sukses untuk ${data.customer_name}, mengecek ketersediaan mesin...`);
-                            
+
                             // 4. Trigger Assigner
                             assignMachines(data.store_id);
                         }
@@ -524,14 +525,14 @@ app.post('/midtrans-webhook', async (req, res) => {
                             await docRef.update({ status: 'Approved' });
                             // Tambah batch token ke toko
                             const validDays = data.valid_days || 0;
-                            
+
                             let expiredAt = null;
                             if (validDays > 0) {
                                 const expirationDate = new Date();
                                 expirationDate.setDate(expirationDate.getDate() + validDays);
                                 expiredAt = admin.firestore.Timestamp.fromDate(expirationDate);
                             }
-                            
+
                             await db.collection('stores').doc(data.store_id).collection('token_batches').add({
                                 package_name: data.package_name || 'Midtrans Package',
                                 original_tokens: data.tokens,
@@ -562,12 +563,12 @@ app.post('/midtrans-webhook', async (req, res) => {
 // 1. ESP32 Meminta Perintah Baru
 app.get('/api/esp32/commands', (req, res) => {
     const deviceId = req.query.device_id;
-    
+
     // Tentukan mesin mana saja yang dikontrol oleh ESP32 yang sedang me-request
     let validMachineIds = [];
-    if (deviceId === 'esp32_001') {
+    if (deviceId === 'esp32_002') {
         validMachineIds = [1, 2]; // Washer 1, Dryer 1
-    } else if (deviceId === 'esp32_002') {
+    } else if (deviceId === 'esp32_001') {
         validMachineIds = [3, 4]; // Washer 2, Dryer 2
     }
 
@@ -579,7 +580,8 @@ app.get('/api/esp32/commands', (req, res) => {
         commands: filteredCommands.map(c => ({
             command_id: c.command_id,
             machine_id: c.machine_id,
-            command: c.command
+            command: c.command,
+            duration_minutes: c.duration_minutes
         }))
     });
 });
@@ -609,7 +611,7 @@ app.post('/api/esp32/data', async (req, res) => {
         else if (espId === 2) targetName = 'dryer 1';
         else if (espId === 3) targetName = 'washer 2';
         else if (espId === 4) targetName = 'dryer 2';
-        
+
         if (targetName) {
             const snapshot = await db.collection('machines').get();
             let foundId = null;

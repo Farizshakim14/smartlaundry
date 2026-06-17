@@ -5,6 +5,8 @@ import 'package:aplikasilaundry/splash_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:intl/date_symbol_data_local.dart';
+import 'package:aplikasilaundry/localization.dart';
 import 'firebase_options.dart';
 
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.light);
@@ -14,6 +16,8 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  await initializeDateFormatting('id_ID', null);
+  await AppLocalizations.init();
   if (kIsWeb) {
     await FirebaseAuth.instance.setPersistence(Persistence.SESSION);
   }
@@ -25,10 +29,13 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: themeNotifier,
-      builder: (context, currentMode, child) {
-        return MaterialApp(
+    return ValueListenableBuilder<String>(
+      valueListenable: AppLocalizations.currentLanguage,
+      builder: (context, lang, _) {
+        return ValueListenableBuilder<ThemeMode>(
+          valueListenable: themeNotifier,
+          builder: (context, currentMode, child) {
+            return MaterialApp(
           debugShowCheckedModeBanner: false,
           title: 'Smart Laundry',
           themeMode: currentMode,
@@ -62,6 +69,8 @@ class MyApp extends StatelessWidget {
           home: const SplashScreen(),
         );
       },
+    );
+    },
     );
   }
 }

@@ -147,7 +147,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
 
         // Tampilkan dialog menunggu pembayaran & struk
         if (orderId != null) {
-          _waitForPaymentAndShowReceipt(orderId, customerName, washQty, dryQty, price);
+          _waitForPaymentAndShowReceipt(orderId, customerName, washQty, dryQty, price, redirectUrl: redirectUrl);
         }
 
       } else {
@@ -159,7 +159,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
     }
   }
 
-  void _waitForPaymentAndShowReceipt(String orderId, String customerName, int washQty, int dryQty, int price) {
+  void _waitForPaymentAndShowReceipt(String orderId, String customerName, int washQty, int dryQty, int price, {String? redirectUrl}) {
     // Tampilkan dialog loading
     showDialog(
       context: context,
@@ -174,6 +174,23 @@ class _CustomerModePageState extends State<CustomerModePage> {
               const Text("Menunggu Pembayaran...", style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               const Text("Silakan selesaikan pembayaran di Midtrans. Struk akan muncul otomatis setelah berhasil.", textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
+              if (redirectUrl != null) ...[
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    final uri = Uri.parse(redirectUrl);
+                    if (await canLaunchUrl(uri)) {
+                      await launchUrl(uri, mode: LaunchMode.externalApplication);
+                    }
+                  },
+                  icon: const Icon(Icons.payment, color: Colors.white),
+                  label: const Text("Buka Halaman Pembayaran", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF10B981), // Hijau Midtrans
+                    minimumSize: const Size(double.infinity, 44),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               TextButton(
                 onPressed: () {

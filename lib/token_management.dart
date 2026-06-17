@@ -325,9 +325,42 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
             if (await canLaunchUrl(uri)) {
               await launchUrl(uri, mode: LaunchMode.externalApplication);
               if (mounted) {
-                _showSuccessDialog(
-                  "Menunggu Pembayaran", 
-                  "Silakan selesaikan pembayaran di browser.\n\nSaldo token toko akan otomatis bertambah setelah pembayaran Midtrans sukses dikonfirmasi."
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) {
+                    return AlertDialog(
+                      content: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(),
+                          const SizedBox(height: 16),
+                          const Text("Menunggu Pembayaran...", style: TextStyle(fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 8),
+                          const Text("Silakan selesaikan pembayaran di Midtrans.\n\nSaldo token toko akan otomatis bertambah setelah pembayaran sukses dikonfirmasi.", textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
+                          const SizedBox(height: 16),
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              if (await canLaunchUrl(uri)) {
+                                await launchUrl(uri, mode: LaunchMode.externalApplication);
+                              }
+                            },
+                            icon: const Icon(Icons.payment, color: Colors.white),
+                            label: const Text("Buka Halaman Pembayaran", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF10B981), // Hijau Midtrans
+                              minimumSize: const Size(double.infinity, 44),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text("Tutup Jendela Ini"),
+                          )
+                        ],
+                      ),
+                    );
+                  }
                 );
               }
             } else {

@@ -24,11 +24,14 @@ dependencies:
   audioplayers: ^6.6.0
   printing: ^5.14.3
   pdf: ^3.12.0
+  fl_chart: ^1.2.0
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.2
 
 flutter:
   uses-material-design: true
@@ -36,4 +39,22 @@ flutter:
   assets:
     - assets/logolaundry.png
     - assets/welcome.png
+    - assets/splash_illustration.png
+    - assets/onboarding_1.png
+    - assets/onboarding_2.png
+    - assets/onboarding_3.png
+    - assets/welcome_hero.png
+    - assets/machine_card_icon.png
     - assets/notification.mp3
+    - assets/app_icon.png
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/app_icon.png"
+  min_sdk_android: 21
+  web:
+    generate: true
+    image_path: "assets/app_icon.png"
+    background_color: "#hexcode"
+    theme_color: "#hexcode"
