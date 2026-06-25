@@ -5,7 +5,7 @@ echo ==============================================
 
 echo.
 echo [1/5] Melakukan Build Flutter Web...
-call flutter build web
+call flutter build web --pwa-strategy=none
 
 echo.
 echo [2/5] Mengompresi hasil build...

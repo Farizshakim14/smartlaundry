@@ -9,7 +9,7 @@ import 'package:aplikasilaundry/activity_log.dart';
 import 'package:aplikasilaundry/store_management.dart';
 import 'package:aplikasilaundry/customer_mode.dart';
 import 'package:aplikasilaundry/live_machine_item.dart';
-
+import 'package:shared_preferences/shared_preferences.dart';
 class HomeTab extends StatefulWidget {
   final String? userName;
   final String userRole;
@@ -34,6 +34,79 @@ class HomeTab extends StatefulWidget {
 
 class _HomeTabState extends State<HomeTab> {
   final formatter = NumberFormat.currency(locale: 'id', symbol: 'Rp ', decimalDigits: 0);
+  String _selectedRevenuePeriod = 'Hari Ini';
+  DateTime? _lastViewedActivities;
+
+  Stream<QuerySnapshot>? _tokenBatchesStream;
+  Stream<QuerySnapshot>? _transactionsStream;
+  Stream<QuerySnapshot>? _machinesStream;
+  Stream<QuerySnapshot>? _activitiesStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _initStreams();
+    _loadLastViewedActivities();
+  }
+
+  Future<void> _loadLastViewedActivities() async {
+    final prefs = await SharedPreferences.getInstance();
+    final timestamp = prefs.getInt('last_viewed_activities_${widget.selectedStoreId ?? "ALL"}');
+    if (timestamp != null) {
+      if (mounted) {
+        setState(() {
+          _lastViewedActivities = DateTime.fromMillisecondsSinceEpoch(timestamp);
+        });
+      }
+    }
+  }
+
+  Future<void> _markActivitiesAsViewed() async {
+    final now = DateTime.now();
+    setState(() {
+      _lastViewedActivities = now;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('last_viewed_activities_${widget.selectedStoreId ?? "ALL"}', now.millisecondsSinceEpoch);
+  }
+
+  @override
+  void didUpdateWidget(HomeTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedStoreId != widget.selectedStoreId) {
+      _initStreams();
+      _loadLastViewedActivities();
+    }
+  }
+
+  void _initStreams() {
+    // 1. Token Batches Stream
+    if (widget.userRole == 'Superadmin' || widget.userRole == 'Admin') {
+      _tokenBatchesStream = FirebaseFirestore.instance.collectionGroup('token_batches').where('remaining_tokens', isGreaterThan: 0).snapshots();
+    } else if (widget.selectedStoreId != null && widget.selectedStoreId != 'ALL') {
+      _tokenBatchesStream = FirebaseFirestore.instance.collection('stores').doc(widget.selectedStoreId).collection('token_batches').where('remaining_tokens', isGreaterThan: 0).snapshots();
+    } else {
+      _tokenBatchesStream = null;
+    }
+
+    // 2. Transactions Stream (Fetch from start of previous year)
+    DateTime now = DateTime.now();
+    DateTime fetchStart = DateTime(now.year - 1, 1, 1);
+    Query txQuery = FirebaseFirestore.instance.collection('transactions')
+        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(fetchStart));
+    _transactionsStream = txQuery.snapshots();
+
+    // 3. Machines Stream
+    Query machineQuery = FirebaseFirestore.instance.collection('machines');
+    if (widget.selectedStoreId != null && widget.selectedStoreId != 'ALL') {
+      machineQuery = machineQuery.where('store_id', isEqualTo: widget.selectedStoreId);
+    }
+    _machinesStream = machineQuery.snapshots();
+
+    // 4. Activities Stream
+    Query actQuery = FirebaseFirestore.instance.collection('activities');
+    _activitiesStream = actQuery.orderBy('timestamp', descending: true).limit(30).snapshots();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -54,12 +127,10 @@ class _HomeTabState extends State<HomeTab> {
             const SizedBox(height: 24),
             _buildSisaTokenCard(context),
             const SizedBox(height: 24),
-            _buildPendapatanHariIni(context),
+            _buildPendapatanWidget(context),
             const SizedBox(height: 24),
             _buildStatusMesin(context),
             _buildMachineList(),
-            const SizedBox(height: 24),
-            _buildTransaksiChart(context),
             const SizedBox(height: 24),
             _buildAktivitasTerbaru(context),
             const SizedBox(height: 100), // Ruang ekstra untuk FAB
@@ -167,24 +238,55 @@ class _HomeTabState extends State<HomeTab> {
             ],
           ),
         ),
-        Stack(
-          children: [
-            IconButton(
-              icon: const Icon(Icons.notifications_outlined, size: 28),
-              onPressed: () {
+        StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('activities')
+              .where('timestamp', isGreaterThan: Timestamp.fromDate(
+                  _lastViewedActivities != null && _lastViewedActivities!.isAfter(DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)) 
+                      ? _lastViewedActivities! 
+                      : DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day)
+              ))
+              .snapshots(),
+          builder: (context, snapshot) {
+            int count = 0;
+            if (snapshot.hasData) {
+              count = snapshot.data!.docs.where((d) {
+                final data = d.data() as Map<String, dynamic>;
+                if (widget.userRole == 'Superadmin' || widget.userRole == 'Owner') {
+                  // Superadmin/Owner sees all stores they own
+                  List<String> myStoreIds = widget.stores.map((s) => s['id'] as String).toList();
+                  return myStoreIds.contains(data['store_id']);
+                }
+                return data['store_id'] == widget.selectedStoreId;
+              }).length;
+            }
+
+            return GestureDetector(
+              onTap: () {
+                _markActivitiesAsViewed();
                 Navigator.push(context, MaterialPageRoute(builder: (context) => ActivityLogPage(initialStoreId: widget.selectedStoreId, stores: widget.stores, userRole: widget.userRole)));
               },
-            ),
-            Positioned(
-              right: 8,
-              top: 8,
-              child: Container(
-                padding: const EdgeInsets.all(4),
-                decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-                child: const Text("5", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  const IconButton(
+                    icon: Icon(Icons.notifications_outlined, size: 28),
+                    onPressed: null, // Disabled inside GestureDetector
+                  ),
+                  if (count > 0)
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+                        child: Text(count > 99 ? "99+" : "$count", style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                ],
               ),
-            ),
-          ],
+            );
+          }
         ),
       ],
     );
@@ -247,17 +349,12 @@ class _HomeTabState extends State<HomeTab> {
   }
 
   Widget _buildSisaTokenCard(BuildContext context) {
-    Stream<QuerySnapshot>? tokenStream;
-    if (widget.selectedStoreId == 'ALL') {
-      tokenStream = FirebaseFirestore.instance.collectionGroup('token_batches').where('remaining_tokens', isGreaterThan: 0).snapshots();
-    } else if (widget.selectedStoreId != null) {
-      tokenStream = FirebaseFirestore.instance.collection('stores').doc(widget.selectedStoreId).collection('token_batches').where('remaining_tokens', isGreaterThan: 0).snapshots();
-    } else {
+    if (_tokenBatchesStream == null) {
       return const SizedBox.shrink();
     }
 
     return StreamBuilder<QuerySnapshot>(
-      stream: tokenStream,
+      stream: _tokenBatchesStream,
       builder: (context, snapshot) {
         int tokenBalance = 0;
         DateTime? maxExpired;
@@ -337,49 +434,113 @@ class _HomeTabState extends State<HomeTab> {
     );
   }
 
-  Widget _buildPendapatanHariIni(BuildContext context) {
+  Widget _buildPendapatanWidget(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    
     DateTime now = DateTime.now();
-    DateTime startOfYesterday = DateTime(now.year, now.month, now.day - 1);
-    
-    Query query = FirebaseFirestore.instance.collection('transactions')
-        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfYesterday));
-    
-    if (widget.selectedStoreId != null && widget.selectedStoreId != 'ALL') {
-      query = query.where('store_id', isEqualTo: widget.selectedStoreId);
-    }
+
+    String activePeriod = widget.userRole == 'Cashier' ? 'Hari Ini' : _selectedRevenuePeriod;
 
     return StreamBuilder<QuerySnapshot>(
-      stream: query.snapshots(),
+      stream: _transactionsStream,
       builder: (context, snapshot) {
-        double todayIncome = 0;
-        double yesterdayIncome = 0;
-        DateTime startOfToday = DateTime(now.year, now.month, now.day);
+        double currentIncome = 0;
+        double previousIncome = 0;
         
+        Map<int, double> dailyIncome30 = {};
+        for (int i = 0; i < 30; i++) dailyIncome30[i] = 0;
+        double maxDaily30 = 20;
+
+        Map<int, double> monthlyIncome = {};
+        for (int i = 1; i <= 12; i++) monthlyIncome[i] = 0;
+        double maxMonthly = 20;
+
         if (snapshot.hasData) {
-          for(var doc in snapshot.data!.docs) {
-             final data = doc.data() as Map<String, dynamic>;
-             final amount = (data['amount'] ?? 0).toDouble();
-             final timestamp = (data['timestamp'] as Timestamp?)?.toDate();
-             if(timestamp != null) {
-                if(timestamp.isAfter(startOfToday) || timestamp.isAtSameMomentAs(startOfToday)) {
-                   todayIncome += amount;
-                } else {
-                   yesterdayIncome += amount;
+          for (var doc in snapshot.data!.docs) {
+            final data = doc.data() as Map<String, dynamic>;
+
+            if (widget.selectedStoreId != null && widget.selectedStoreId != 'ALL') {
+              if (data['store_id'] != widget.selectedStoreId) continue;
+            } else if (widget.userRole == 'Owner') {
+              List<String> myStoreIds = widget.stores.map((s) => s['id'] as String).toList();
+              if (!myStoreIds.contains(data['store_id'])) continue;
+            }
+
+            final amount = (data['amount'] ?? 0).toDouble();
+            final timestamp = (data['timestamp'] as Timestamp?)?.toDate();
+            if (timestamp != null) {
+              DateTime startOfToday = DateTime(now.year, now.month, now.day);
+              DateTime startOfYesterday = startOfToday.subtract(const Duration(days: 1));
+              
+              if (activePeriod == 'Hari Ini') {
+                if (timestamp.isAfter(startOfToday) || timestamp.isAtSameMomentAs(startOfToday)) {
+                  currentIncome += amount;
+                } else if (timestamp.isAfter(startOfYesterday) && timestamp.isBefore(startOfToday)) {
+                  previousIncome += amount;
                 }
-             }
+              } else if (activePeriod == 'Bulan Ini') {
+                DateTime thirtyDaysAgo = startOfToday.subtract(const Duration(days: 29));
+                DateTime sixtyDaysAgo = startOfToday.subtract(const Duration(days: 59));
+                if (timestamp.isAfter(thirtyDaysAgo) || timestamp.isAtSameMomentAs(thirtyDaysAgo)) {
+                  currentIncome += amount;
+                  final diff = startOfToday.difference(DateTime(timestamp.year, timestamp.month, timestamp.day)).inDays;
+                  if (diff >= 0 && diff < 30) {
+                    int index = 29 - diff;
+                    dailyIncome30[index] = (dailyIncome30[index] ?? 0) + amount;
+                    if (dailyIncome30[index]! > maxDaily30) maxDaily30 = dailyIncome30[index]!;
+                  }
+                } else if (timestamp.isAfter(sixtyDaysAgo) && timestamp.isBefore(thirtyDaysAgo)) {
+                  previousIncome += amount;
+                }
+              } else if (activePeriod == 'Tahun Ini') {
+                if (timestamp.year == now.year) {
+                  currentIncome += amount;
+                  monthlyIncome[timestamp.month] = (monthlyIncome[timestamp.month] ?? 0) + amount;
+                  if (monthlyIncome[timestamp.month]! > maxMonthly) maxMonthly = monthlyIncome[timestamp.month]!;
+                } else if (timestamp.year == now.year - 1) {
+                  previousIncome += amount;
+                }
+              }
+            }
           }
         }
-        
+
         double percentChange = 0;
-        if (yesterdayIncome > 0) {
-          percentChange = ((todayIncome - yesterdayIncome) / yesterdayIncome) * 100;
-        } else if (todayIncome > 0) {
+        if (previousIncome > 0) {
+          percentChange = ((currentIncome - previousIncome) / previousIncome) * 100;
+        } else if (currentIncome > 0) {
           percentChange = 100;
         }
-        
         bool isUp = percentChange >= 0;
+        
+        String previousLabel = "";
+        if (activePeriod == 'Hari Ini') previousLabel = "Dari kemarin";
+        else if (activePeriod == 'Bulan Ini') previousLabel = "Dari bulan lalu";
+        else if (activePeriod == 'Tahun Ini') previousLabel = "Dari tahun lalu";
+
+        List<FlSpot> spots = [];
+        double minX = 0;
+        double maxX = 6;
+        double maxY = 6;
+        
+        if (activePeriod == 'Hari Ini') {
+          spots = const [FlSpot(0, 1), FlSpot(1, 2), FlSpot(2, 1.5), FlSpot(3, 3), FlSpot(4, 2.5), FlSpot(5, 4), FlSpot(6, 5)];
+          maxX = 6;
+          maxY = 6;
+        } else if (activePeriod == 'Bulan Ini') {
+          minX = 0;
+          maxX = 29;
+          for (int i = 0; i < 30; i++) {
+            spots.add(FlSpot(i.toDouble(), dailyIncome30[i]!));
+          }
+          maxY = maxDaily30 > 0 ? maxDaily30 * 1.2 : 20;
+        } else if (activePeriod == 'Tahun Ini') {
+          minX = 1;
+          maxX = 12;
+          for (int i = 1; i <= 12; i++) {
+            spots.add(FlSpot(i.toDouble(), monthlyIncome[i]!));
+          }
+          maxY = maxMonthly > 0 ? maxMonthly * 1.2 : 20;
+        }
 
         return Container(
           width: double.infinity,
@@ -393,61 +554,98 @@ class _HomeTabState extends State<HomeTab> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(AppLocalizations.tr('today_income'), style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  const SizedBox(width: 8),
-                  Icon(isUp ? Icons.arrow_upward : Icons.arrow_downward, color: isUp ? Colors.green : Colors.red, size: 16),
-                  Text("${percentChange.abs().toStringAsFixed(1)}%", style: TextStyle(color: isUp ? Colors.green : Colors.red, fontWeight: FontWeight.bold)),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            activePeriod == 'Hari Ini' ? "Pendapatan Hari Ini" : 
+                            activePeriod == 'Bulan Ini' ? "Pendapatan 30 Hari" : "Pendapatan Tahun Ini", 
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Icon(isUp ? Icons.arrow_upward : Icons.arrow_downward, color: isUp ? Colors.green : Colors.red, size: 16),
+                        Text("${percentChange.abs().toStringAsFixed(1)}%", style: TextStyle(color: isUp ? Colors.green : Colors.red, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                  if (widget.userRole != 'Cashier')
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2563EB).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _selectedRevenuePeriod,
+                          isDense: true,
+                          icon: const Icon(Icons.keyboard_arrow_down, size: 18, color: Color(0xFF2563EB)),
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF2563EB), fontWeight: FontWeight.bold),
+                          borderRadius: BorderRadius.circular(16),
+                          dropdownColor: isDark ? const Color(0xFF1E293B) : Colors.white,
+                          items: ['Hari Ini', 'Bulan Ini', 'Tahun Ini'].map((String value) {
+                            return DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(value),
+                            );
+                          }).toList(),
+                          onChanged: (newValue) {
+                            if (newValue != null) {
+                              setState(() {
+                                _selectedRevenuePeriod = newValue;
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                    ),
                 ],
               ),
               const SizedBox(height: 16),
+              
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(formatter.format(todayIncome), style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 4),
-                      Text("Dari kemarin ${formatter.format(yesterdayIncome)}", style: TextStyle(color: Colors.grey[500], fontSize: 12)),
-                    ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(formatter.format(currentIncome), 
+                          style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Text("$previousLabel ${formatter.format(previousIncome)}", 
+                          style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
                   ),
+                  const SizedBox(width: 16),
                   SizedBox(
-                    width: 100,
+                    width: 80,
                     height: 50,
                     child: LineChart(
                       LineChartData(
+                        lineTouchData: const LineTouchData(enabled: false),
                         gridData: const FlGridData(show: false),
                         titlesData: const FlTitlesData(show: false),
                         borderData: FlBorderData(show: false),
-                        minX: 0,
-                        maxX: 6,
-                        minY: 0,
-                        maxY: 6,
+                        minX: minX, maxX: maxX, minY: 0, maxY: maxY,
                         lineBarsData: [
                           LineChartBarData(
-                            spots: const [
-                              FlSpot(0, 1),
-                              FlSpot(1, 2),
-                              FlSpot(2, 1.5),
-                              FlSpot(3, 3),
-                              FlSpot(4, 2.5),
-                              FlSpot(5, 4),
-                              FlSpot(6, 5),
-                            ],
-                            isCurved: true,
-                            color: Colors.blue,
-                            barWidth: 3,
-                            isStrokeCapRound: true,
-                            dotData: const FlDotData(show: false),
+                            spots: spots,
+                            isCurved: true, color: Colors.blue, barWidth: 3, isStrokeCapRound: true, dotData: const FlDotData(show: false),
                             belowBarData: BarAreaData(
                               show: true,
-                              gradient: LinearGradient(
-                                colors: [Colors.blue.withOpacity(0.3), Colors.blue.withOpacity(0.0)],
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                              ),
+                              gradient: LinearGradient(colors: [Colors.blue.withOpacity(0.3), Colors.blue.withOpacity(0.0)], begin: Alignment.topCenter, end: Alignment.bottomCenter),
                             ),
                           ),
                         ],
@@ -455,7 +653,7 @@ class _HomeTabState extends State<HomeTab> {
                     ),
                   ),
                 ],
-              ),
+              )
             ],
           ),
         );
@@ -466,13 +664,8 @@ class _HomeTabState extends State<HomeTab> {
   Widget _buildStatusMesin(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     
-    Query query = FirebaseFirestore.instance.collection('machines');
-    if (widget.selectedStoreId != null && widget.selectedStoreId != 'ALL') {
-      query = query.where('store_id', isEqualTo: widget.selectedStoreId);
-    }
-
     return StreamBuilder<QuerySnapshot>(
-      stream: query.snapshots(),
+      stream: _machinesStream,
       builder: (context, snapshot) {
         int washerActive = 0;
         int washerIdle = 0;
@@ -522,13 +715,8 @@ class _HomeTabState extends State<HomeTab> {
   }
 
   Widget _buildMachineList() {
-    Query query = FirebaseFirestore.instance.collection('machines');
-    if (widget.selectedStoreId != null && widget.selectedStoreId != 'ALL') {
-      query = query.where('store_id', isEqualTo: widget.selectedStoreId);
-    }
-
     return StreamBuilder<QuerySnapshot>(
-      stream: query.snapshots(),
+      stream: _machinesStream,
       builder: (context, snapshot) {
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
           return const SizedBox.shrink();
@@ -574,121 +762,18 @@ class _HomeTabState extends State<HomeTab> {
     );
   }
 
-  Widget _buildTransaksiChart(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    
-    DateTime now = DateTime.now();
-    DateTime thirtyDaysAgo = DateTime(now.year, now.month, now.day - 29);
 
-    Query query = FirebaseFirestore.instance.collection('transactions')
-        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(thirtyDaysAgo));
-    
-    if (widget.selectedStoreId != null && widget.selectedStoreId != 'ALL') {
-      query = query.where('store_id', isEqualTo: widget.selectedStoreId);
-    }
-
-    return StreamBuilder<QuerySnapshot>(
-      stream: query.snapshots(),
-      builder: (context, snapshot) {
-        Map<int, double> dailyIncome = {};
-        for (int i = 0; i < 30; i++) { dailyIncome[i] = 0; }
-        double total30Days = 0;
-        double maxDaily = 20;
-
-        if (snapshot.hasData) {
-          for(var doc in snapshot.data!.docs) {
-             final data = doc.data() as Map<String, dynamic>;
-             final amount = (data['amount'] ?? 0).toDouble();
-             final timestamp = (data['timestamp'] as Timestamp?)?.toDate();
-             if(timestamp != null) {
-                 final diff = DateTime(now.year, now.month, now.day).difference(DateTime(timestamp.year, timestamp.month, timestamp.day)).inDays;
-                 if (diff >= 0 && diff < 30) {
-                     int index = 29 - diff; // 0 is 30 days ago, 29 is today
-                     dailyIncome[index] = (dailyIncome[index] ?? 0) + amount;
-                     total30Days += amount;
-                     if (dailyIncome[index]! > maxDaily) {
-                       maxDaily = dailyIncome[index]!;
-                     }
-                 }
-             }
-          }
-        }
-        
-        if (maxDaily == 0) maxDaily = 20;
-
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1E293B) : Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(AppLocalizations.tr('transactions_30_days'), style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-              const SizedBox(height: 8),
-              Text(formatter.format(total30Days), style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 24),
-              SizedBox(
-                height: 100,
-                child: BarChart(
-                  BarChartData(
-                    alignment: BarChartAlignment.spaceAround,
-                    maxY: maxDaily * 1.2,
-                    barTouchData: BarTouchData(enabled: false),
-                    titlesData: FlTitlesData(
-                      show: true,
-                      bottomTitles: AxisTitles(
-                        sideTitles: SideTitles(
-                          showTitles: true,
-                          getTitlesWidget: (double value, TitleMeta meta) {
-                            const style = TextStyle(color: Colors.grey, fontSize: 10);
-                            Widget text = const Text('', style: style);
-                            int index = value.toInt();
-                            if (index == 0 || index == 7 || index == 14 || index == 21 || index == 29) {
-                              DateTime date = thirtyDaysAgo.add(Duration(days: index));
-                              text = Text('${date.day} ${DateFormat('MMM', 'id_ID').format(date)}', style: style);
-                            }
-                            return SideTitleWidget(meta: meta, space: 4, child: text);
-                          },
-                          reservedSize: 28,
-                        ),
-                      ),
-                      leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                      topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                      rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    ),
-                    gridData: const FlGridData(show: false),
-                    borderData: FlBorderData(show: false),
-                    barGroups: List.generate(30, (i) {
-                      return BarChartGroupData(
-                        x: i,
-                        barRods: [BarChartRodData(toY: dailyIncome[i]!, color: Colors.indigoAccent, width: 4, borderRadius: BorderRadius.circular(4))],
-                      );
-                    }),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      }
-    );
-  }
 
   Widget _buildAktivitasTerbaru(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     
-    Query query = FirebaseFirestore.instance.collection('activities').orderBy('timestamp', descending: true).limit(3);
-
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(AppLocalizations.tr('recent_activities'), style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            Text(AppLocalizations.tr('recent_activity'), style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             GestureDetector(
               onTap: () {
                  Navigator.push(context, MaterialPageRoute(builder: (context) => ActivityLogPage(initialStoreId: widget.selectedStoreId, stores: widget.stores, userRole: widget.userRole)));
@@ -699,9 +784,22 @@ class _HomeTabState extends State<HomeTab> {
         ),
         const SizedBox(height: 12),
         StreamBuilder<QuerySnapshot>(
-          stream: query.snapshots(),
+          stream: _activitiesStream,
           builder: (context, snapshot) {
             if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+              return Center(child: Text(AppLocalizations.tr('no_activity'), style: TextStyle(color: Colors.grey)));
+            }
+            
+            var docs = snapshot.data!.docs;
+            // FILTER LOKAL
+            if (widget.selectedStoreId != null && widget.selectedStoreId != 'ALL') {
+              docs = docs.where((d) => (d.data() as Map<String, dynamic>)['store_id'] == widget.selectedStoreId).toList();
+            } else if (widget.userRole == 'Owner') {
+              List<String> myStoreIds = widget.stores.map((s) => s['id'] as String).toList();
+              docs = docs.where((d) => myStoreIds.contains((d.data() as Map<String, dynamic>)['store_id'])).toList();
+            }
+
+            if (docs.isEmpty) {
               return Center(child: Text(AppLocalizations.tr('no_activity'), style: TextStyle(color: Colors.grey)));
             }
             
@@ -713,7 +811,7 @@ class _HomeTabState extends State<HomeTab> {
                 boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
               ),
               child: Column(
-                children: snapshot.data!.docs.map((doc) {
+                children: docs.take(3).map((doc) {
                   final data = doc.data() as Map<String, dynamic>;
                   String action = data['action'] ?? 'Aktivitas Baru';
                   Timestamp? timestamp = data['timestamp'] as Timestamp?;

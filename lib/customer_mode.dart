@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:async';
 import 'package:intl/intl.dart';
@@ -135,19 +136,12 @@ class _CustomerModePageState extends State<CustomerModePage> {
         );
 
         final responseData = jsonDecode(response.body);
-        final redirectUrl = responseData['redirect_url'];
+        final qrUrl = responseData['qr_url'];
         final orderId = responseData['order_id'];
-        
-        if (redirectUrl != null) {
-          final uri = Uri.parse(redirectUrl);
-          if (await canLaunchUrl(uri)) {
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-          }
-        }
 
         // Tampilkan dialog menunggu pembayaran & struk
-        if (orderId != null) {
-          _waitForPaymentAndShowReceipt(orderId, customerName, washQty, dryQty, price, redirectUrl: redirectUrl);
+        if (orderId != null && qrUrl != null) {
+          _waitForPaymentAndShowReceipt(orderId, customerName, washQty, dryQty, price, qrUrl: qrUrl);
         }
 
       } else {
@@ -159,7 +153,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
     }
   }
 
-  void _waitForPaymentAndShowReceipt(String orderId, String customerName, int washQty, int dryQty, int price, {String? redirectUrl}) {
+  void _waitForPaymentAndShowReceipt(String orderId, String customerName, int washQty, int dryQty, int price, {String? qrUrl}) {
     // Tampilkan dialog loading
     showDialog(
       context: context,
@@ -169,28 +163,43 @@ class _CustomerModePageState extends State<CustomerModePage> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const CircularProgressIndicator(),
+              const Text("Scan QRIS untuk Membayar", style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              if (qrUrl != null)
+                Container(
+                  width: 250,
+                  height: 250,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.network(
+                      'http://103.150.226.111:3000/proxy-qr?url=${Uri.encodeComponent(qrUrl)}', 
+                      fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Center(child: Text("Gagal memuat QR Code", textAlign: TextAlign.center));
+                      },
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 16),
+              if (qrUrl != null)
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: qrUrl));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('URL QR berhasil disalin! (Gunakan untuk download/testing)')),
+                    );
+                  },
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: const Text("Salin URL QR (Khusus Testing)", style: TextStyle(fontSize: 12)),
+                ),
               const SizedBox(height: 16),
               const Text("Menunggu Pembayaran...", style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              const Text("Silakan selesaikan pembayaran di Midtrans. Struk akan muncul otomatis setelah berhasil.", textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
-              if (redirectUrl != null) ...[
-                const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    final uri = Uri.parse(redirectUrl);
-                    if (await canLaunchUrl(uri)) {
-                      await launchUrl(uri, mode: LaunchMode.externalApplication);
-                    }
-                  },
-                  icon: const Icon(Icons.payment, color: Colors.white),
-                  label: const Text("Buka Halaman Pembayaran", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF10B981), // Hijau Midtrans
-                    minimumSize: const Size(double.infinity, 44),
-                  ),
-                ),
-              ],
+              const Text("Silakan scan QR Code di atas menggunakan aplikasi e-Wallet atau m-Banking Anda.\n\nStruk akan muncul otomatis setelah pembayaran sukses.", textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
               const SizedBox(height: 16),
               TextButton(
                 onPressed: () {
@@ -253,7 +262,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text("Cuci (Washer):"),
+                      const Text("Mesin Cuci:"),
                       Text("x$washQty"),
                     ],
                   ),
@@ -261,7 +270,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text("Kering (Dryer):"),
+                      const Text("Mesin Pengering:"),
                       Text("x$dryQty"),
                     ],
                   ),
@@ -484,7 +493,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
                                 Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Text("Cuci (Washer)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                    const Text("Mesin Cuci", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                                     Text("Rp ${NumberFormat('#,###', 'id_ID').format(defaultWashPrice)}", style: const TextStyle(color: Colors.grey)),
                                   ],
                                 ),
@@ -511,7 +520,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
                                 Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Text("Kering (Dryer)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                    const Text("Mesin Pengering", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                                     Text("Rp ${NumberFormat('#,###', 'id_ID').format(defaultDryPrice)}", style: const TextStyle(color: Colors.grey)),
                                   ],
                                 ),
@@ -887,7 +896,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
                                                       child: Text("${index + 1}", style: const TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.bold)),
                                                     ),
                                                     title: Text(q['customer_name'] ?? 'Pelanggan', style: const TextStyle(fontWeight: FontWeight.bold)),
-                                                    subtitle: Text("Menunggu: ${q['step'] == 'Wash' ? 'Washer' : 'Dryer'}"),
+                                                    subtitle: Text("Menunggu: ${q['step'] == 'Wash' ? 'Mesin Cuci' : 'Mesin Pengering'}"),
                                                   ),
                                                 );
                                               },

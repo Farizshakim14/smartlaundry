@@ -82,8 +82,9 @@ class _ActivityLogPageState extends State<ActivityLogPage> {
                   style: TextStyle(color: isDark ? Colors.white : const Color(0xFF1E293B), fontWeight: FontWeight.w600, fontSize: 14),
                   isDense: true,
                   items: [
-                    const DropdownMenuItem(value: 'ALL', child: Text("Semua Toko")),
-                    ...widget.stores.map((s) => DropdownMenuItem(value: s['id'], child: Text(s['name'])))
+                    if (!widget.stores.any((s) => s['id'] == 'ALL'))
+                      const DropdownMenuItem<String>(value: 'ALL', child: Text("Semua Toko")),
+                    ...widget.stores.map((s) => DropdownMenuItem<String>(value: s['id'] as String, child: Text(s['name'] as String)))
                   ],
                   onChanged: (val) {
                     setState(() {

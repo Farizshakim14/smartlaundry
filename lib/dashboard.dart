@@ -17,6 +17,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import 'package:aplikasilaundry/home_tab.dart';
+import 'package:aplikasilaundry/push_notification_service.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -32,7 +33,6 @@ class _DashboardPageState extends State<DashboardPage> {
   String? _selectedStoreId;
   List<Map<String, dynamic>> _myStores = [];
   bool _isLoading = true;
-  Timer? _autoStopTimer;
   
   String? _currentSessionId;
   
@@ -42,64 +42,30 @@ class _DashboardPageState extends State<DashboardPage> {
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isInitialNotificationLoad = true;
 
+  String get _effectiveRole {
+    if (_userRole == 'Superadmin' && _selectedStoreId != 'ALL' && _selectedStoreId != null) {
+      return 'Owner';
+    }
+    return _userRole ?? 'Unknown';
+  }
+
   @override
   void initState() {
     super.initState();
     _currentSessionId = DateTime.now().millisecondsSinceEpoch.toString();
     _setupUserAndStoreListeners();
-    _autoStopTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
-      _checkAndAutoStopMachines();
-    });
+    
+    // Inisialisasi Push Notification setelah login berhasil
+    PushNotificationService.initialize();
   }
 
   @override
   void dispose() {
-    _autoStopTimer?.cancel();
     _notificationSubscription?.cancel();
     _userSubscription?.cancel();
     _storeSubscription?.cancel();
     _audioPlayer.dispose();
     super.dispose();
-  }
-
-  Future<void> _checkAndAutoStopMachines() async {
-    if (_selectedStoreId == null) return;
-    
-    try {
-      final snap = await FirebaseFirestore.instance
-        .collection('machines')
-        .where('store_id', isEqualTo: _selectedStoreId)
-        .where('status', isEqualTo: 'Active')
-        .where('timer_enabled', isEqualTo: true)
-        .get();
-        
-      for (var doc in snap.docs) {
-        final data = doc.data();
-        if (data['start_time'] != null && data['duration_minutes'] != null) {
-          final startTime = (data['start_time'] as Timestamp).toDate();
-          final duration = data['duration_minutes'] as int;
-          final endTime = startTime.add(Duration(minutes: duration));
-          
-          if (DateTime.now().isAfter(endTime)) {
-            // Auto stop
-            await doc.reference.update({
-              'status': 'Idle',
-              'timer_enabled': FieldValue.delete(),
-              'duration_minutes': FieldValue.delete(),
-              'start_time': FieldValue.delete(),
-              'payment_method': FieldValue.delete(),
-            });
-            
-            await ActivityService.logActivity(
-              storeId: _selectedStoreId,
-              action: "Mesin ${data['name']} otomatis berhenti (Waktu habis)",
-            );
-          }
-        }
-      }
-    } catch (e) {
-      // Ignore
-    }
   }
 
   Future<void> _setupUserAndStoreListeners() async {
@@ -300,15 +266,15 @@ class _DashboardPageState extends State<DashboardPage> {
     final List<Widget> pages = [
       HomeTab(
         userName: _userName,
-        userRole: _userRole ?? 'Unknown',
+        userRole: _effectiveRole,
         selectedStoreId: _selectedStoreId,
         stores: _myStores,
         onStoreChanged: (val) => setState(() => _selectedStoreId = val),
         onViewAllMachines: () => setState(() => _selectedIndex = 1),
       ),
-      MachinePage(selectedStoreId: _selectedStoreId, userRole: _userRole ?? 'Unknown'),
+      MachinePage(selectedStoreId: _selectedStoreId, userRole: _effectiveRole),
       MasterPelangganPage(selectedStoreId: _selectedStoreId),
-      StatsPage(selectedStoreId: _selectedStoreId, userRole: _userRole ?? 'Unknown', myStores: _myStores),
+      StatsPage(selectedStoreId: _selectedStoreId, userRole: _effectiveRole, myStores: _myStores),
       ProfilePage(selectedStoreId: _selectedStoreId),
     ];
 
@@ -478,7 +444,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     context,
                     MaterialPageRoute(
                       builder: (context) => TokenManagementPage(
-                        currentRole: _userRole ?? 'Unknown',
+                        currentRole: _effectiveRole,
                         selectedStoreId: _selectedStoreId,
                       ),
                     ),

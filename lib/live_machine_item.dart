@@ -51,14 +51,23 @@ class _LiveMachineItemState extends State<LiveMachineItem> with SingleTickerProv
     final rawStatus = data['status']?.toString() ?? 'Idle';
     final type = data['type']?.toString() ?? 'Washer';
     
+    final currentAmpere = double.tryParse(data['current_ampere']?.toString() ?? '0') ?? 0.0;
+    
     Color color = const Color(0xFFF59E0B); // Idle
     double progress = 0.0;
     String timeLeft = "-";
     String status = rawStatus == 'Idle' ? AppLocalizations.tr('idle') : rawStatus;
     
     if (rawStatus == 'Active') {
-      status = type == 'Washer' ? AppLocalizations.tr('washing') : AppLocalizations.tr('drying');
-      color = type == 'Washer' ? const Color(0xFF2563EB) : const Color(0xFF10B981);
+      // Smart Status based on Ampere
+      if (currentAmpere < 0.5) {
+         status = "Selesai / Diam";
+         color = const Color(0xFFF59E0B); // Kuning
+      } else {
+         status = type == 'Washer' ? AppLocalizations.tr('washing') : AppLocalizations.tr('drying');
+         color = type == 'Washer' ? const Color(0xFF2563EB) : const Color(0xFF10B981);
+      }
+      
       final timerEnabled = data['timer_enabled'] == true;
       if (timerEnabled && data['start_time'] != null && data['duration_minutes'] != null) {
          final startTime = (data['start_time'] as Timestamp).toDate();
@@ -72,9 +81,16 @@ class _LiveMachineItemState extends State<LiveMachineItem> with SingleTickerProv
            final passedSecs = totalSecs - diff.inSeconds;
            progress = (passedSecs / totalSecs).clamp(0.0, 1.0);
            
-           final min = diff.inMinutes;
-           final sec = diff.inSeconds % 60;
-           timeLeft = "${min}m ${sec}s";
+           if (type == 'Dryer' && data['dryer_remaining_minutes'] != null) {
+               // Gunakan data real dari ESP32 untuk Dryer
+               int remMins = (data['dryer_remaining_minutes'] as num).toInt();
+               timeLeft = "${remMins}m 0s";
+               progress = ((durationMins - remMins) / durationMins).clamp(0.0, 1.0);
+           } else {
+               final min = diff.inMinutes;
+               final sec = diff.inSeconds % 60;
+               timeLeft = "${min}m ${sec}s";
+           }
          } else {
            progress = 1.0;
            timeLeft = "0m 0s";
@@ -176,6 +192,15 @@ class _LiveMachineItemState extends State<LiveMachineItem> with SingleTickerProv
                     fontSize: 13,
                     color: color,
                     fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  "Daya: ${currentAmpere.toStringAsFixed(2)} A",
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isDark ? Colors.grey[400] : Colors.grey[600],
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ],

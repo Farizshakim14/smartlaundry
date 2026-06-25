@@ -22,6 +22,7 @@ class ProfilePage extends StatefulWidget {
 
 class _ProfilePageState extends State<ProfilePage> {
   final Map<String, Future<DocumentSnapshot>> _storeCache = {};
+  bool _notificationsEnabled = true;
 
   Future<DocumentSnapshot> _getStoreData(String storeId) {
     if (!_storeCache.containsKey(storeId)) {
@@ -273,17 +274,23 @@ class _ProfilePageState extends State<ProfilePage> {
                                 "Pengaturan Notifikasi", 
                                 isDark,
                                 trailing: Switch(
-                                  value: true, 
+                                  value: _notificationsEnabled, 
                                   onChanged: (val) {
+                                    setState(() {
+                                      _notificationsEnabled = val;
+                                    });
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text("Notifikasi diubah")),
+                                      SnackBar(content: Text(val ? "Notifikasi Diaktifkan" : "Notifikasi Dinonaktifkan")),
                                     );
                                   }, 
                                   activeColor: const Color(0xFF4F46E5),
                                 ),
                                 onTap: () {
+                                  setState(() {
+                                    _notificationsEnabled = !_notificationsEnabled;
+                                  });
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text("Pengaturan Notifikasi belum tersedia.")),
+                                    SnackBar(content: Text(_notificationsEnabled ? "Notifikasi Diaktifkan" : "Notifikasi Dinonaktifkan")),
                                   );
                                 }
                               ),
@@ -327,7 +334,11 @@ class _ProfilePageState extends State<ProfilePage> {
                               borderRadius: BorderRadius.circular(20),
                               onTap: () async {
                                 try {
-                                  await GoogleSignIn().signOut();
+                                  try {
+                                    await GoogleSignIn().signOut();
+                                  } catch (e) {
+                                    print("GoogleSignIn logout error: $e");
+                                  }
                                   await FirebaseAuth.instance.signOut();
                                   if(mounted) {
                                       Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (context) => const WelcomePage()), (route) => false);

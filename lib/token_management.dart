@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
@@ -22,6 +24,7 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
   late TabController _tabController;
 
   bool get isAdmin => widget.currentRole == 'Superadmin' || widget.currentRole == 'Admin';
+  Map<String, dynamic>? _selectedPackage;
 
   @override
   void initState() {
@@ -214,8 +217,8 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Text("Midtrans (Otomatis)", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF10B981))),
-                                    Text("QRIS, GoPay, Transfer Bank", style: TextStyle(fontSize: 12, color: subTextColor)),
+                                    const Text("QRIS (Langsung)", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF10B981))),
+                                    Text("Bayar langsung dengan scan QRIS", style: TextStyle(fontSize: 12, color: subTextColor)),
                                   ],
                                 ),
                               ),
@@ -318,13 +321,14 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
 
         if (response.statusCode == 200) {
           final responseData = jsonDecode(response.body);
-          final redirectUrl = responseData['redirect_url'];
+          final qrUrl = responseData['qr_url'];
+          final orderId = responseData['order_id'];
           
-          if (redirectUrl != null) {
-            final uri = Uri.parse(redirectUrl);
-            if (await canLaunchUrl(uri)) {
-              await launchUrl(uri, mode: LaunchMode.externalApplication);
+          if (qrUrl != null && orderId != null) {
               if (mounted) {
+                // Siapkan listener Firestore sebelum membuka dialog
+                StreamSubscription<DocumentSnapshot>? sub;
+                
                 showDialog(
                   context: context,
                   barrierDismissible: false,
@@ -333,25 +337,41 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
                       content: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const CircularProgressIndicator(),
+                          const Text("Scan QRIS untuk Membayar", style: TextStyle(fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 16),
+                          Container(
+                            width: 250,
+                            height: 250,
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey.shade300),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.network(
+                                'http://103.150.226.111:3000/proxy-qr?url=${Uri.encodeComponent(qrUrl)}', 
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return const Center(child: Text("Gagal memuat QR Code", textAlign: TextAlign.center));
+                                },
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              Clipboard.setData(ClipboardData(text: qrUrl));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('URL QR berhasil disalin! (Gunakan untuk download/testing)')),
+                              );
+                            },
+                            icon: const Icon(Icons.copy, size: 16),
+                            label: const Text("Salin URL QR (Khusus Testing)", style: TextStyle(fontSize: 12)),
+                          ),
                           const SizedBox(height: 16),
                           const Text("Menunggu Pembayaran...", style: TextStyle(fontWeight: FontWeight.bold)),
                           const SizedBox(height: 8),
-                          const Text("Silakan selesaikan pembayaran di Midtrans.\n\nSaldo token toko akan otomatis bertambah setelah pembayaran sukses dikonfirmasi.", textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
-                          const SizedBox(height: 16),
-                          ElevatedButton.icon(
-                            onPressed: () async {
-                              if (await canLaunchUrl(uri)) {
-                                await launchUrl(uri, mode: LaunchMode.externalApplication);
-                              }
-                            },
-                            icon: const Icon(Icons.payment, color: Colors.white),
-                            label: const Text("Buka Halaman Pembayaran", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF10B981), // Hijau Midtrans
-                              minimumSize: const Size(double.infinity, 44),
-                            ),
-                          ),
+                          const Text("Silakan scan QR Code di atas menggunakan aplikasi e-Wallet atau m-Banking Anda.\n\nSaldo token toko akan otomatis bertambah setelah pembayaran sukses dikonfirmasi.", textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
                           const SizedBox(height: 16),
                           TextButton(
                             onPressed: () => Navigator.pop(context),
@@ -361,13 +381,37 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
                       ),
                     );
                   }
-                );
+                ).then((_) {
+                  // Batalkan listener jika dialog ditutup manual
+                  sub?.cancel();
+                });
+
+                // Mulai listen status pembayaran
+                sub = FirebaseFirestore.instance.collection('token_requests').doc(orderId).snapshots().listen((doc) {
+                  if (doc.exists && doc.data() != null) {
+                    final data = doc.data() as Map<String, dynamic>;
+                    if (data['status'] == 'Approved') {
+                      sub?.cancel();
+                      if (mounted) {
+                        Navigator.pop(context); // Tutup dialog QR
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Pembayaran berhasil! Token ditambahkan.'), backgroundColor: Colors.green),
+                        );
+                      }
+                    } else if (data['status'] == 'Failed') {
+                      sub?.cancel();
+                      if (mounted) {
+                        Navigator.pop(context); // Tutup dialog QR
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Pembayaran dibatalkan atau kedaluwarsa.'), backgroundColor: Colors.red),
+                        );
+                      }
+                    }
+                  }
+                });
               }
-            } else {
-              throw 'Tidak dapat membuka halaman pembayaran.';
-            }
           } else {
-            throw 'Gagal mendapatkan link pembayaran dari server.';
+            throw 'Gagal mendapatkan QRIS dari server.';
           }
         } else {
           throw 'Error dari server: ${response.statusCode}';
@@ -478,49 +522,580 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
     await FirebaseFirestore.instance.collection('token_packages').doc(docId).delete();
   }
 
+  Future<Map<String, int>> _fetchHeaderStats() async {
+    int saldoSistem = 0;
+    int totalTransaksi = 0;
+    int pendingRequest = 0;
+    int approvedRequest = 0;
+
+    try {
+      // 1. Saldo Sistem (Total remaining_tokens dari semua toko)
+      final batchesSnap = await FirebaseFirestore.instance.collectionGroup('token_batches').get();
+      for (var doc in batchesSnap.docs) {
+        saldoSistem += (doc.data()['remaining_tokens'] ?? 0) as int;
+      }
+
+      // 2. Total Transaksi Hari Ini
+      final today = DateTime.now();
+      final startOfDay = DateTime(today.year, today.month, today.day);
+      final txSnap = await FirebaseFirestore.instance.collection('transactions')
+          .where('timestamp', isGreaterThanOrEqualTo: startOfDay)
+          .get();
+      totalTransaksi = txSnap.docs.length;
+
+      // 3. Pending & Approved Request
+      final reqSnap = await FirebaseFirestore.instance.collection('token_requests').get();
+      for (var doc in reqSnap.docs) {
+        final status = doc.data()['status'];
+        if (status == 'Pending') pendingRequest++;
+        if (status == 'Approved') approvedRequest++;
+      }
+    } catch (e) {
+      debugPrint("Error fetching stats: $e");
+    }
+
+    return {
+      'saldoSistem': saldoSistem,
+      'totalTransaksi': totalTransaksi,
+      'pendingRequest': pendingRequest,
+      'approvedRequest': approvedRequest,
+    };
+  }
+
+  Widget _buildBlueHeader() {
+    return FutureBuilder<Map<String, int>>(
+      future: _fetchHeaderStats(),
+      builder: (context, snapshot) {
+        final stats = snapshot.data ?? {'saldoSistem': 0, 'totalTransaksi': 0, 'pendingRequest': 0, 'approvedRequest': 0};
+        
+        return Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFF2563EB), Color(0xFF3B82F6)],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
+          ),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      flex: 6,
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text("Saldo Sistem", style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFFF59E0B),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.star, color: Colors.white, size: 20),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  NumberFormat.decimalPattern('id').format(stats['saldoSistem']),
+                                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black87),
+                                ),
+                                const SizedBox(width: 4),
+                                const Text("Token", style: TextStyle(color: Colors.grey, fontSize: 14)),
+                              ],
+                            ),
+                            const SizedBox(height: 24),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text("Total Transaksi Hari Ini", style: TextStyle(color: Colors.grey, fontSize: 11)),
+                                const Icon(Icons.chevron_right, size: 14, color: Colors.grey),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              "${stats['totalTransaksi']}",
+                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF2563EB)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      flex: 4,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
+                          color: Colors.white,
+                          child: Image.asset('assets/machine_card_icon.png', fit: BoxFit.contain, height: 130),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                ),
+                padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1E293B) : Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFE2E8F0).withOpacity(0.5)),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(color: const Color(0xFF8B5CF6).withOpacity(0.1), shape: BoxShape.circle),
+                              child: const Icon(Icons.access_time_filled, color: Color(0xFF8B5CF6)),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text("Pending Request", style: TextStyle(fontSize: 10, color: Colors.grey), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                  Text("${stats['pendingRequest']}", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                                  const Text("Request", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1E293B) : const Color(0xFFF0FDF4),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFFBBF7D0).withOpacity(0.5)),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(color: const Color(0xFF10B981).withOpacity(0.2), shape: BoxShape.circle),
+                              child: const Icon(Icons.check_circle, color: Color(0xFF10B981)),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text("Disetujui", style: TextStyle(fontSize: 10, color: Colors.grey), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                  Text("${stats['approvedRequest']}", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                                  const Text("Request", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+    );
+  }
+
+  Future<Map<String, dynamic>> _fetchOwnerTokens() async {
+    if (widget.selectedStoreId == null) return {'total': 0, 'expired_at': null};
+    int total = 0;
+    DateTime? maxExpiry;
+    final snap = await FirebaseFirestore.instance.collection('stores').doc(widget.selectedStoreId).collection('token_batches').get();
+    for (var doc in snap.docs) {
+      final rem = (doc.data()['remaining_tokens'] ?? 0) as int;
+      if (rem > 0) {
+        bool isExpired = false;
+        final exp = doc.data()['expired_at'] as Timestamp?;
+        if (exp != null) {
+          if (DateTime.now().isAfter(exp.toDate())) {
+            isExpired = true;
+          }
+        }
+
+        if (!isExpired) {
+          total += rem;
+          if (exp != null) {
+            if (maxExpiry == null || exp.toDate().isAfter(maxExpiry!)) {
+              maxExpiry = exp.toDate();
+            }
+          }
+        }
+      }
+    }
+    return {'total': total, 'expired_at': maxExpiry};
+  }
+
+  Widget _buildOwnerTokenPage() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgColor = isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
+    final cardColor = isDark ? const Color(0xFF1E293B) : Colors.white;
+    final textColor = isDark ? Colors.white : const Color(0xFF1E293B);
+    final subTextColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+
+    return Scaffold(
+      backgroundColor: bgColor,
+      appBar: AppBar(
+        backgroundColor: bgColor,
+        elevation: 0,
+        iconTheme: IconThemeData(color: textColor),
+        title: Text("Token Saya", style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+        actions: [
+          IconButton(icon: const Icon(Icons.notifications_none), onPressed: () {}),
+        ],
+      ),
+      body: widget.selectedStoreId == null
+        ? const Center(child: Text("Toko belum dipilih. Silakan pilih toko di Dashboard."))
+        : Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header Biru Token Saya
+                      FutureBuilder<Map<String, dynamic>>(
+                        future: _fetchOwnerTokens(),
+                        builder: (context, snapshot) {
+                          final data = snapshot.data ?? {'total': 0, 'expired_at': null};
+                          final expiryDate = data['expired_at'] as DateTime?;
+                          final expiryStr = expiryDate != null ? DateFormat('dd MMMM yyyy', 'id').format(expiryDate) : 'Lifetime';
+                          
+                          return Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(24),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFF3B82F6), Color(0xFF2563EB)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(24),
+                              boxShadow: [
+                                BoxShadow(color: const Color(0xFF2563EB).withOpacity(0.3), blurRadius: 20, offset: const Offset(0, 10)),
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
+                                            child: const Icon(Icons.stars, color: Colors.white, size: 20),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          const Text("Token Saya", style: TextStyle(color: Colors.white, fontSize: 16)),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Row(
+                                        crossAxisAlignment: CrossAxisAlignment.end,
+                                        children: [
+                                          Text("${data['total']}", style: const TextStyle(color: Colors.white, fontSize: 40, fontWeight: FontWeight.w900, height: 1)),
+                                          const SizedBox(width: 8),
+                                          const Padding(
+                                            padding: EdgeInsets.only(bottom: 6),
+                                            child: Text("Token", style: TextStyle(color: Colors.white70, fontSize: 16)),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Row(
+                                        children: [
+                                          const Icon(Icons.calendar_today, color: Colors.white70, size: 14),
+                                          const SizedBox(width: 6),
+                                          Text("Berakhir: $expiryStr", style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Image.asset('assets/machine_card_icon.png', width: 100, fit: BoxFit.contain),
+                              ],
+                            ),
+                          );
+                        }
+                      ),
+                      
+                      const SizedBox(height: 32),
+                      Text("Pilih Paket Token", style: TextStyle(color: textColor, fontSize: 18, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 16),
+                      
+                      // List Paket Token
+                      StreamBuilder<QuerySnapshot>(
+                        stream: FirebaseFirestore.instance.collection('token_packages').orderBy('created_at', descending: true).snapshots(),
+                        builder: (context, snapshot) {
+                          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                          final packages = snapshot.data!.docs;
+                          
+                          return Column(
+                            children: packages.map((doc) {
+                              final data = doc.data() as Map<String, dynamic>;
+                              final packageId = doc.id;
+                              final name = data['name']?.toString() ?? 'Paket';
+                              final tokens = data['tokens'] as int? ?? 0;
+                              final price = data['price'] as int? ?? 0;
+                              final validDays = data['valid_days'] as int? ?? 0;
+                              
+                              final isSelected = _selectedPackage != null && _selectedPackage!['id'] == packageId;
+                              
+                              return GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    _selectedPackage = {
+                                      'id': packageId,
+                                      'name': name,
+                                      'tokens': tokens,
+                                      'price': price,
+                                      'valid_days': validDays,
+                                    };
+                                  });
+                                },
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 16),
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: cardColor,
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(color: isSelected ? const Color(0xFF6366F1) : (isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0)), width: isSelected ? 2 : 1),
+                                    boxShadow: [
+                                      if (isSelected) BoxShadow(color: const Color(0xFF6366F1).withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 4)),
+                                    ],
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(16),
+                                        decoration: BoxDecoration(
+                                          color: isSelected ? const Color(0xFF6366F1).withOpacity(0.1) : const Color(0xFFF1F5F9),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(Icons.local_laundry_service, color: isSelected ? const Color(0xFF6366F1) : const Color(0xFF94A3B8), size: 28),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(name, style: TextStyle(color: textColor, fontSize: 16, fontWeight: FontWeight.bold)),
+                                            const SizedBox(height: 4),
+                                            Row(
+                                              children: [
+                                                Text("$tokens Token", style: const TextStyle(color: Color(0xFF6366F1), fontSize: 14, fontWeight: FontWeight.bold)),
+                                                const SizedBox(width: 8),
+                                                Text("•  ${validDays > 0 ? '$validDays Hari' : 'Lifetime'}", style: TextStyle(color: subTextColor, fontSize: 12)),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Text(currencyFormatter.format(price), style: const TextStyle(color: Color(0xFF10B981), fontSize: 16, fontWeight: FontWeight.bold)),
+                                          ],
+                                        ),
+                                      ),
+                                      Radio<String>(
+                                        value: packageId,
+                                        groupValue: _selectedPackage?['id'],
+                                        onChanged: (val) {
+                                          setState(() {
+                                            _selectedPackage = {
+                                              'id': packageId,
+                                              'name': name,
+                                              'tokens': tokens,
+                                              'price': price,
+                                              'valid_days': validDays,
+                                            };
+                                          });
+                                        },
+                                        activeColor: const Color(0xFF6366F1),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          );
+                        }
+                      ),
+                      
+                      const SizedBox(height: 16),
+                      // Info Card
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEFF6FF),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.info_outline, color: Color(0xFF3B82F6), size: 20),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text("Informasi", style: TextStyle(color: Color(0xFF1E3A8A), fontWeight: FontWeight.bold, fontSize: 14)),
+                                  SizedBox(height: 4),
+                                  Text("Token akan langsung masuk setelah pembayaran berhasil dikonfirmasi.", style: TextStyle(color: Color(0xFF1E3A8A), fontSize: 12)),
+                                ],
+                              ),
+                            )
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                    ],
+                  ),
+                ),
+              ),
+              // Bottom Nav
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20, offset: const Offset(0, -5)),
+                  ],
+                ),
+                child: SafeArea(
+                  child: ElevatedButton(
+                    onPressed: _selectedPackage == null ? null : () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => PaymentDetailsPage(
+                            package: _selectedPackage!,
+                            storeId: widget.selectedStoreId!,
+                            onProcessBuyToken: (pkg, method) {
+                              Navigator.pop(context); // Tutup PaymentDetailsPage
+                              _processBuyToken(pkg, method);
+                            },
+                            onShowManualTransfer: (pkg) {
+                              Navigator.pop(context); // Tutup PaymentDetailsPage
+                              _showManualTransferDialog(pkg);
+                            },
+                          )
+                        )
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2563EB),
+                      disabledBackgroundColor: const Color(0xFF94A3B8),
+                      minimumSize: const Size(double.infinity, 56),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    child: const Text("Lanjutkan Pembayaran", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (!isAdmin) {
+      return _buildOwnerTokenPage();
+    }
+
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bgColor = isDark ? const Color(0xFF0F172A) : const Color(0xFFF4F7FA);
+    final bgColor = isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
     final cardColor = isDark ? const Color(0xFF1E293B) : Colors.white;
     final textColor = isDark ? Colors.white : const Color(0xFF1E293B);
     final primaryColor = isDark ? const Color(0xFF60A5FA) : const Color(0xFF2563EB);
 
     return Scaffold(
       backgroundColor: bgColor,
-      appBar: AppBar(
-        backgroundColor: cardColor,
-        elevation: 0,
-        title: Text(
-          "Token Management",
-          style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
-        ),
-        iconTheme: IconThemeData(color: textColor),
-        bottom: isAdmin
-            ? TabBar(
-                controller: _tabController,
-                labelColor: primaryColor,
-                unselectedLabelColor: Colors.grey,
-                indicatorColor: primaryColor,
-                tabs: const [
-                  Tab(text: "Paket Token"),
-                  Tab(text: "Approval Request"),
-                ],
-              )
-            : null,
+      body: NestedScrollView(
+        headerSliverBuilder: (context, innerBoxIsScrolled) {
+          return [
+            SliverAppBar(
+              backgroundColor: isAdmin ? const Color(0xFF2563EB) : cardColor,
+              elevation: 0,
+              pinned: true,
+              title: Text(
+                "Token Management",
+                style: TextStyle(color: isAdmin ? Colors.white : textColor, fontWeight: FontWeight.bold),
+              ),
+              iconTheme: IconThemeData(color: isAdmin ? Colors.white : textColor),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.notifications_none),
+                  onPressed: () {},
+                )
+              ],
+            ),
+            if (isAdmin)
+              SliverToBoxAdapter(
+                child: _buildBlueHeader(),
+              ),
+            if (isAdmin)
+              SliverPersistentHeader(
+                pinned: true,
+                delegate: _SliverTabBarDelegate(
+                  TabBar(
+                    controller: _tabController,
+                    labelColor: primaryColor,
+                    unselectedLabelColor: Colors.grey,
+                    indicatorColor: primaryColor,
+                    indicatorWeight: 3,
+                    tabs: const [
+                      Tab(text: "Paket Token"),
+                      Tab(text: "Approval Request"),
+                    ],
+                  ),
+                  color: bgColor,
+                ),
+              ),
+          ];
+        },
+        body: isAdmin ? TabBarView(
+          controller: _tabController,
+          children: [
+            _buildPackageList(),
+            _buildRequestList(),
+          ],
+        ) : _buildPackageList(),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _buildPackageList(),
-          if (isAdmin) _buildRequestList(),
-        ],
-      ),
-      floatingActionButton: isAdmin && _tabController.index == 0
+      floatingActionButton: (isAdmin && _tabController.index == 0)
           ? FloatingActionButton.extended(
               onPressed: _showAddTokenPackageDialog,
-              backgroundColor: const Color(0xFF10B981), // Emerald
-              icon: const Icon(Icons.add, color: Colors.white),
+              backgroundColor: const Color(0xFF2563EB), // Primary Blue
+              icon: const Icon(Icons.add_circle_outline, color: Colors.white),
               label: const Text("Buat Paket", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             )
           : null,
@@ -563,33 +1138,35 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
             final tokens = data['tokens'] as int? ?? 0;
             final price = data['price'] as int? ?? 0;
 
+            final isDark = Theme.of(context).brightness == Brightness.dark;
+            final cardColor = isDark ? const Color(0xFF1E293B) : Colors.white;
+            final textColor = isDark ? Colors.white : const Color(0xFF1E293B);
+            final subTextColor = isDark ? const Color(0xFF94A3B8) : Colors.grey[600]!;
+
             return Container(
               margin: const EdgeInsets.only(bottom: 16),
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF2563EB), Color(0xFF3B82F6)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                color: cardColor,
                 borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0)),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFF2563EB).withOpacity(0.3),
-                    blurRadius: 15,
-                    offset: const Offset(0, 8),
+                    color: Colors.black.withOpacity(isDark ? 0.2 : 0.03),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
                   ),
                 ],
               ),
               child: Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
+                      color: const Color(0xFF8B5CF6).withOpacity(0.1),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.monetization_on, color: Colors.white, size: 32),
+                    child: const Icon(Icons.local_laundry_service, color: Color(0xFF8B5CF6), size: 32),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
@@ -598,31 +1175,74 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
                       children: [
                         Text(
                           name,
-                          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                          style: TextStyle(color: textColor, fontSize: 16, fontWeight: FontWeight.bold),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          "$tokens Token (Masa Berlaku: ${data['valid_days'] != null && data['valid_days'] > 0 ? '${data['valid_days']} Hari' : 'Lifetime'})",
-                          style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 14),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Text(
+                              "$tokens Token",
+                              style: const TextStyle(color: Color(0xFF2563EB), fontSize: 14, fontWeight: FontWeight.bold),
+                            ),
+                            Expanded(
+                              child: Text(
+                                "  •  ${data['valid_days'] != null && data['valid_days'] > 0 ? 'Berlaku ${data['valid_days']} Hari' : 'Lifetime'}",
+                                style: TextStyle(color: subTextColor, fontSize: 12),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 8),
                         Text(
                           currencyFormatter.format(price),
-                          style: const TextStyle(color: Color(0xFFFDE047), fontSize: 16, fontWeight: FontWeight.bold),
+                          style: const TextStyle(color: Color(0xFF10B981), fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
                   ),
                   if (isAdmin)
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.white70),
-                      onPressed: () => _deletePackage(doc.id),
+                    PopupMenuButton<String>(
+                      icon: Icon(Icons.more_vert, color: subTextColor),
+                      onSelected: (value) {
+                        if (value == 'delete') {
+                          showDialog(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: const Text("Hapus Paket"),
+                              content: Text("Yakin ingin menghapus paket '$name'?"),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(context), child: const Text("Batal")),
+                                TextButton(
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    _deletePackage(doc.id);
+                                  }, 
+                                  child: const Text("Hapus", style: TextStyle(color: Colors.red)),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Row(
+                            children: [
+                              Icon(Icons.delete_outline, color: Colors.red),
+                              SizedBox(width: 8),
+                              Text("Hapus Paket", style: TextStyle(color: Colors.red)),
+                            ],
+                          ),
+                        ),
+                      ],
                     )
                   else
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: const Color(0xFF2563EB),
+                        backgroundColor: const Color(0xFF2563EB),
+                        foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
                       onPressed: () => _confirmBuyToken(data),
@@ -664,70 +1284,230 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
           itemBuilder: (context, index) {
             final doc = requests[index];
             final data = doc.data() as Map<String, dynamic>;
-            final storeId = data['store_id'];
-            final packageName = data['package_name'];
-            final tokens = data['tokens'] as int;
-            final price = data['price'] as int;
-            final method = data['method'];
+            final storeId = data['store_id']?.toString() ?? '';
+            final packageName = data['package_name']?.toString() ?? 'Paket Token';
+            final tokens = data['tokens'] as int? ?? 0;
+            final price = data['price'] as int? ?? 0;
+            final method = data['method']?.toString() ?? '-';
             final proofUrl = data['proof_url'] as String?;
             final validDays = data['valid_days'] as int? ?? 0;
 
             // Kita bisa ngambil nama toko kalau mau, tapi untuk simplifikasi kita tampilkan storeId.
-            return Card(
-              color: cardColor,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              child: ListTile(
-                contentPadding: const EdgeInsets.all(16),
-                title: Text("$packageName ($tokens Token)", style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text("Store: $storeId\nMetode: $method\nHarga: ${currencyFormatter.format(price)}\nMasa Berlaku: ${validDays > 0 ? '$validDays Hari' : 'Lifetime'}", style: TextStyle(color: subTextColor)),
-                    if (proofUrl != null) ...[
-                      const SizedBox(height: 8),
-                      InkWell(
-                        onTap: () {
-                          showDialog(
-                            context: context,
-                            builder: (context) => Dialog(
-                              child: Stack(
-                                children: [
-                                  Image.network(proofUrl, fit: BoxFit.contain),
-                                  Positioned(
-                                    top: 8, right: 8,
-                                    child: IconButton(
-                                      icon: const Icon(Icons.close, color: Colors.white, shadows: [Shadow(blurRadius: 10)]),
-                                      onPressed: () => Navigator.pop(context),
-                                    ),
-                                  )
-                                ],
-                              )
-                            )
-                          );
-                        },
-                        child: Text("Lihat Bukti Transfer", style: TextStyle(color: const Color(0xFF2563EB), fontWeight: FontWeight.bold, decoration: TextDecoration.underline)),
+            return FutureBuilder<DocumentSnapshot>(
+              future: storeId.isNotEmpty ? FirebaseFirestore.instance.collection('stores').doc(storeId).get() : null,
+              builder: (context, storeSnapshot) {
+                String storeName = storeId.isEmpty ? 'Unknown Store' : storeId; // fallback
+                if (storeSnapshot.hasData && storeSnapshot.data!.exists) {
+                  final storeData = storeSnapshot.data!.data() as Map<String, dynamic>?;
+                  if (storeData != null && storeData.containsKey('name')) {
+                    storeName = storeData['name']?.toString() ?? storeName;
+                  }
+                }
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: cardColor,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(isDark ? 0.2 : 0.03),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
                       ),
-                    ]
-                  ],
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Colors.red),
-                      onPressed: () => _rejectRequest(doc.id),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header Card
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF8B5CF6).withOpacity(0.1),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.local_laundry_service, color: Color(0xFF8B5CF6), size: 32),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        packageName,
+                                        style: TextStyle(color: textColor, fontSize: 16, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF59E0B).withOpacity(0.15),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: const Text(
+                                        "PENDING",
+                                        style: TextStyle(color: Color(0xFFD97706), fontSize: 10, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  "$tokens Token",
+                                  style: const TextStyle(color: Color(0xFF2563EB), fontSize: 16, fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      
+                      // Details
+                      _buildDetailRow(Icons.storefront_outlined, "Nama Toko", storeName, isDark),
+                      _buildDetailRow(Icons.payment_outlined, "Metode", method, isDark),
+                      _buildDetailRow(Icons.monetization_on_outlined, "Harga", currencyFormatter.format(price), isDark),
+                      _buildDetailRow(Icons.access_time, "Masa Berlaku", validDays > 0 ? '$validDays Hari' : 'Lifetime', isDark),
+                  
+                  if (proofUrl != null) ...[
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: Divider(height: 1, color: Color(0xFFE2E8F0)),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.check, color: Colors.green),
-                      onPressed: () => _approveRequest(doc.id, storeId, tokens, validDays),
+                    InkWell(
+                      onTap: () {
+                        showDialog(
+                          context: context,
+                          builder: (context) => Dialog(
+                            child: Stack(
+                              children: [
+                                Image.network(proofUrl, fit: BoxFit.contain),
+                                Positioned(
+                                  top: 8, right: 8,
+                                  child: IconButton(
+                                    icon: const Icon(Icons.close, color: Colors.white, shadows: [Shadow(blurRadius: 10)]),
+                                    onPressed: () => Navigator.pop(context),
+                                  ),
+                                )
+                              ],
+                            )
+                          )
+                        );
+                      },
+                      child: Row(
+                        children: [
+                          const Icon(Icons.image_outlined, color: Color(0xFF2563EB), size: 20),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              "Lihat Bukti Transfer",
+                              style: TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.bold, fontSize: 14),
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right, color: Color(0xFF2563EB), size: 20),
+                        ],
+                      ),
                     ),
                   ],
-                ),
+                  
+                  const SizedBox(height: 20),
+                  
+                  // Action Buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red,
+                            side: const BorderSide(color: Colors.red),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          onPressed: () => _rejectRequest(doc.id),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.close, size: 18),
+                              SizedBox(width: 8),
+                              Text("Tolak", style: TextStyle(fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF10B981),
+                            side: const BorderSide(color: Color(0xFF10B981)),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          onPressed: () => _approveRequest(doc.id, storeId, tokens, validDays),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.check, size: 18),
+                              SizedBox(width: 8),
+                              Text("Setujui", style: TextStyle(fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             );
-          },
-        );
-      },
+          }, // closes FutureBuilder builder
+        ); // closes return FutureBuilder
+      }, // closes itemBuilder
+    ); // closes return ListView.builder
+  }, // closes StreamBuilder builder
+); // closes return StreamBuilder
+}
+
+  Widget _buildDetailRow(IconData icon, String label, String value, bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: isDark ? const Color(0xFF94A3B8) : Colors.grey[600]),
+          const SizedBox(width: 12),
+          Expanded(
+            flex: 2,
+            child: Text(
+              label,
+              style: TextStyle(color: isDark ? const Color(0xFF94A3B8) : Colors.grey[600], fontSize: 14),
+            ),
+          ),
+          Expanded(
+            flex: 3,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    value,
+                    style: TextStyle(color: isDark ? Colors.white : const Color(0xFF1E293B), fontSize: 14, fontWeight: FontWeight.w500),
+                  ),
+                ),
+                if (label == "Store ID")
+                  const Icon(Icons.copy, size: 16, color: Colors.grey),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1066,3 +1846,268 @@ class _ManualTransferDialogState extends State<ManualTransferDialog> {
   }
 }
 
+class _SliverTabBarDelegate extends SliverPersistentHeaderDelegate {
+  final TabBar _tabBar;
+  final Color color;
+
+  _SliverTabBarDelegate(this._tabBar, {required this.color});
+
+  @override
+  double get minExtent => _tabBar.preferredSize.height;
+  @override
+  double get maxExtent => _tabBar.preferredSize.height;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return Container(
+      color: color,
+      child: _tabBar,
+    );
+  }
+
+  @override
+  bool shouldRebuild(_SliverTabBarDelegate oldDelegate) {
+    return false;
+  }
+}
+
+class PaymentDetailsPage extends StatefulWidget {
+  final Map<String, dynamic> package;
+  final String storeId;
+  final Function(Map<String, dynamic>, String) onProcessBuyToken;
+  final Function(Map<String, dynamic>) onShowManualTransfer;
+
+  const PaymentDetailsPage({
+    super.key,
+    required this.package,
+    required this.storeId,
+    required this.onProcessBuyToken,
+    required this.onShowManualTransfer,
+  });
+
+  @override
+  State<PaymentDetailsPage> createState() => _PaymentDetailsPageState();
+}
+
+class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
+  final currencyFormatter = NumberFormat.currency(locale: 'id', symbol: 'Rp ', decimalDigits: 0);
+  String _selectedMethod = 'transfer'; // transfer, ewallet, qris
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bgColor = isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
+    final cardColor = isDark ? const Color(0xFF1E293B) : Colors.white;
+    final textColor = isDark ? Colors.white : const Color(0xFF1E293B);
+    final subTextColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+
+    return Scaffold(
+      backgroundColor: bgColor,
+      appBar: AppBar(
+        backgroundColor: bgColor,
+        elevation: 0,
+        iconTheme: IconThemeData(color: textColor),
+        title: Text("Detail Pembayaran", style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Package Summary Card
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: cardColor,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF6366F1).withOpacity(0.1),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.local_laundry_service, color: Color(0xFF6366F1), size: 28),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(widget.package['name'], style: TextStyle(color: textColor, fontSize: 16, fontWeight: FontWeight.bold)),
+                                  const SizedBox(height: 4),
+                                  Text("${widget.package['tokens']} Token", style: const TextStyle(color: Color(0xFF6366F1), fontSize: 16, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            )
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text("Masa Berlaku", style: TextStyle(color: subTextColor, fontSize: 14)),
+                            Text(widget.package['valid_days'] > 0 ? '${widget.package['valid_days']} Hari' : 'Lifetime', style: TextStyle(color: textColor, fontSize: 14)),
+                          ],
+                        ),
+                        const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Divider()),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text("Total Harga", style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.bold)),
+                            Text(currencyFormatter.format(widget.package['price']), style: const TextStyle(color: Color(0xFF6366F1), fontSize: 16, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 32),
+                  Text("Metode Pembayaran", style: TextStyle(color: textColor, fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+                  
+                  // Payment Methods
+                  _buildMethodOption('transfer', Icons.account_balance, "Transfer Bank", "Transfer manual ke rekening", isDark, cardColor, textColor, subTextColor),
+                  _buildMethodOption('ewallet', Icons.account_balance_wallet, "E-Wallet", "OVO, DANA, GoPay, ShopeePay", isDark, cardColor, textColor, subTextColor),
+                  _buildMethodOption('qris', Icons.qr_code_scanner, "QRIS", "Scan QR untuk pembayaran", isDark, cardColor, textColor, subTextColor),
+                  
+                  const SizedBox(height: 32),
+                  // Ringkasan Pembayaran
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: cardColor,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("Ringkasan Pembayaran", style: TextStyle(color: textColor, fontSize: 16, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 16),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text("Paket", style: TextStyle(color: subTextColor, fontSize: 14)),
+                            Text("${widget.package['name']} (${widget.package['tokens']} Token)", style: TextStyle(color: subTextColor, fontSize: 14)),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text("Harga", style: TextStyle(color: subTextColor, fontSize: 14)),
+                            Text(currencyFormatter.format(widget.package['price']), style: TextStyle(color: subTextColor, fontSize: 14)),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text("Biaya Admin", style: TextStyle(color: subTextColor, fontSize: 14)),
+                            Text("Rp 0", style: TextStyle(color: subTextColor, fontSize: 14)),
+                          ],
+                        ),
+                        const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Divider()),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text("Total Pembayaran", style: TextStyle(color: textColor, fontSize: 16, fontWeight: FontWeight.bold)),
+                            Text(currencyFormatter.format(widget.package['price']), style: const TextStyle(color: Color(0xFF6366F1), fontSize: 20, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                ],
+              ),
+            ),
+          ),
+          
+          // Bottom Nav Konfirmasi
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: cardColor,
+              boxShadow: [
+                BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20, offset: const Offset(0, -5)),
+              ],
+            ),
+            child: SafeArea(
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  if (_selectedMethod == 'transfer') {
+                    widget.onShowManualTransfer(widget.package);
+                  } else {
+                    widget.onProcessBuyToken(widget.package, 'Midtrans');
+                  }
+                },
+                icon: const Icon(Icons.verified_user_outlined, color: Colors.white),
+                label: const Text("Konfirmasi & Bayar", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2563EB),
+                  minimumSize: const Size(double.infinity, 56),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMethodOption(String value, IconData icon, String title, String subtitle, bool isDark, Color cardColor, Color textColor, Color subTextColor) {
+    final isSelected = _selectedMethod == value;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _selectedMethod = value;
+        });
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: isSelected ? const Color(0xFF6366F1) : (isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0)), width: isSelected ? 2 : 1),
+        ),
+        child: Row(
+          children: [
+            Radio<String>(
+              value: value,
+              groupValue: _selectedMethod,
+              onChanged: (val) {
+                setState(() => _selectedMethod = val!);
+              },
+              activeColor: const Color(0xFF2563EB),
+            ),
+            const SizedBox(width: 8),
+            Icon(icon, color: isSelected ? const Color(0xFF2563EB) : const Color(0xFF94A3B8), size: 24),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: TextStyle(color: textColor, fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 2),
+                  Text(subtitle, style: TextStyle(color: subTextColor, fontSize: 12)),
+                ],
+              ),
+            )
+          ],
+        ),
+      ),
+    );
+  }
+}

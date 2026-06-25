@@ -126,7 +126,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
                     Uri.parse('http://103.150.226.111:3000/delete-user'),
                     headers: {'Content-Type': 'application/json'},
                     body: jsonEncode({'email': email}),
-                  );
+                  ).timeout(const Duration(seconds: 5));
                   print("Auth deletion response: ${response.body}");
                 } catch (e) {
                   print("Warning: Gagal menghapus Auth: $e");

@@ -736,9 +736,9 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
                     _buildSectionTitle("3. Tarif Dasar (Rp)", color: primaryColor),
                     Row(
                       children: [
-                        Expanded(child: _buildTextField("Harga Washer", _priceWasher, "0", (v) => _priceWasher = v!.trim(), type: TextInputType.number, prefixText: "Rp ", fillColor: fillColor, textColor: textColor)),
+                        Expanded(child: _buildTextField("Harga Mesin Cuci", _priceWasher, "0", (v) => _priceWasher = v!.trim(), type: TextInputType.number, prefixText: "Rp ", fillColor: fillColor, textColor: textColor)),
                         const SizedBox(width: 16),
-                        Expanded(child: _buildTextField("Harga Dryer", _priceDryer, "0", (v) => _priceDryer = v!.trim(), type: TextInputType.number, prefixText: "Rp ", fillColor: fillColor, textColor: textColor)),
+                        Expanded(child: _buildTextField("Harga Mesin Pengering", _priceDryer, "0", (v) => _priceDryer = v!.trim(), type: TextInputType.number, prefixText: "Rp ", fillColor: fillColor, textColor: textColor)),
                       ],
                     ),
 

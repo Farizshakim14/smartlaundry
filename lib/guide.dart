@@ -19,7 +19,7 @@ class GuidePage extends StatelessWidget {
         _buildSection("Store Management", "Atur mesin cuci dan pengering Anda. Anda dapat menambah, mengedit, dan menghapus data mesin yang ada di toko Anda.", isDark),
         _buildSection("User Management", "Kelola kasir atau admin yang bertugas di toko Anda. Anda bisa menambahkan staf baru dan menetapkan role mereka.", isDark),
         _buildSection("Mode Pelanggan", "Mode khusus bergaya Kiosk (Self-Service). Dapat diletakkan di tablet kasir agar pelanggan bisa memesan layanan secara mandiri menggunakan QRIS.", isDark),
-        _buildSection("Master Pelanggan", "Kelola data pelanggan yang pernah memesan layanan. Anda juga bisa melihat statistik penggunaan mesin (Washer & Dryer) mereka.", isDark),
+        _buildSection("Master Pelanggan", "Kelola data pelanggan yang pernah memesan layanan. Anda juga bisa melihat statistik penggunaan mesin (Mesin Cuci & Mesin Pengering) mereka.", isDark),
         _buildSection("Pengaturan", "Ubah profil toko, informasi akun pribadi Anda, dan preferensi aplikasi lainnya.", isDark),
       ];
     } else if (r == 'cashier') {

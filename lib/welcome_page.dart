@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'login.dart';
-
+import 'package:url_launcher/url_launcher.dart';
 class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key});
 
@@ -369,8 +369,11 @@ class _WelcomePageState extends State<WelcomePage> with TickerProviderStateMixin
                                 width: double.infinity,
                                 height: 54,
                                 child: OutlinedButton(
-                                  onPressed: () {
-                                    // Action for contact admin
+                                  onPressed: () async {
+                                    final Uri url = Uri.parse('https://wa.me/6285882144478');
+                                    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+                                      debugPrint('Could not launch $url');
+                                    }
                                   },
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: const Color(0xFF2563EB),

@@ -6,7 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart'; 
 import 'forgot_password.dart';
 import 'package:google_fonts/google_fonts.dart';
-
+import 'package:url_launcher/url_launcher.dart';
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -499,25 +499,33 @@ class _LoginPageState extends State<LoginPage> {
                   const SizedBox(height: 32),
                   
                   // Sign Up Link (Admin Contact)
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.support_agent_rounded, size: 20, color: Color(0xFF2563EB)),
-                      const SizedBox(width: 8),
-                      RichText(
-                        text: TextSpan(
-                          style: GoogleFonts.inter(
-                            fontSize: 13,
-                            color: const Color(0xFF475569),
+                  GestureDetector(
+                    onTap: () async {
+                      final Uri url = Uri.parse('https://wa.me/6285882144478');
+                      if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+                        debugPrint('Could not launch $url');
+                      }
+                    },
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.support_agent_rounded, size: 20, color: Color(0xFF2563EB)),
+                        const SizedBox(width: 8),
+                        RichText(
+                          text: TextSpan(
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              color: const Color(0xFF475569),
+                            ),
+                            children: const [
+                              TextSpan(text: "Belum memiliki akun?\n"),
+                              TextSpan(text: "Hubungi Administrator", style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF2563EB))),
+                            ],
                           ),
-                          children: const [
-                            TextSpan(text: "Belum memiliki akun?\n"),
-                            TextSpan(text: "Hubungi Administrator", style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF2563EB))),
-                          ],
+                          textAlign: TextAlign.center,
                         ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 40),
                 ],

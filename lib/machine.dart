@@ -4,6 +4,8 @@ import 'package:aplikasilaundry/activity_service.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:intl/intl.dart';
+import 'dart:async';
 
 class MachinePage extends StatefulWidget {
   final String? selectedStoreId;
@@ -17,6 +19,30 @@ class MachinePage extends StatefulWidget {
 class _MachinePageState extends State<MachinePage> {
   String _searchQuery = '';
   String _selectedFilter = 'Semua';
+
+  Stream<QuerySnapshot>? _machinesStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _initStream();
+  }
+
+  @override
+  void didUpdateWidget(MachinePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedStoreId != widget.selectedStoreId) {
+      _initStream();
+    }
+  }
+
+  void _initStream() {
+    if (widget.selectedStoreId != null) {
+      _machinesStream = FirebaseFirestore.instance.collection('machines').where('store_id', isEqualTo: widget.selectedStoreId).snapshots();
+    } else {
+      _machinesStream = null;
+    }
+  }
 
   void _showPlayMachineDialog(String machineId, Map<String, dynamic> machine) {
     if (widget.selectedStoreId == null) return;
@@ -69,28 +95,7 @@ class _MachinePageState extends State<MachinePage> {
                         },
                       ),
                     ],
-                    const SizedBox(height: 24),
-                    Text("Metode Pembayaran", style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black)),
-                    RadioListTile<String>(
-                      title: Text("Kasir", style: TextStyle(color: isDark ? Colors.white : Colors.black)),
-                      value: "Cashier",
-                      groupValue: paymentMethod,
-                      onChanged: (val) {
-                        setDialogState(() {
-                          paymentMethod = val!;
-                        });
-                      },
-                    ),
-                    RadioListTile<String>(
-                      title: Text("QRIS", style: TextStyle(color: isDark ? Colors.white : Colors.black)),
-                      value: "QRIS",
-                      groupValue: paymentMethod,
-                      onChanged: (val) {
-                        setDialogState(() {
-                          paymentMethod = val!;
-                        });
-                      },
-                    ),
+
                     const SizedBox(height: 24),
                     Text("Pilih Paket Token", style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black)),
                     const SizedBox(height: 8),
@@ -189,17 +194,8 @@ class _MachinePageState extends State<MachinePage> {
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pilih token terlebih dahulu')));
                       return;
                     }
-                    if (paymentMethod == "QRIS") {
-                      if (machine['price'] == null || machine['price'] == 0) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Harga mesin belum disetel! Silakan edit mesin.')));
-                        return;
-                      }
-                      Navigator.pop(context);
-                      await _payMachineMidtrans(machineId, machine, enableTimer, duration, selectedBatchId!, machine['price']);
-                    } else {
-                      Navigator.pop(context);
-                      await _startMachine(machineId, machine, enableTimer, duration, paymentMethod, selectedBatchId!);
-                    }
+                    Navigator.pop(context);
+                    await _startMachine(machineId, machine, enableTimer, duration, "Cashier", selectedBatchId!);
                   },
                   child: const Text("Play", style: TextStyle(color: Colors.white)),
                 ),
@@ -463,6 +459,16 @@ class _MachinePageState extends State<MachinePage> {
     );
   }
 
+  void _showDiagnosticsDialog(String machineId, Map<String, dynamic> machine) {
+    showDialog(
+      context: context,
+      builder: (context) => SensorDiagnosticsDialog(
+        machineId: machineId,
+        machine: machine,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -491,7 +497,7 @@ class _MachinePageState extends State<MachinePage> {
                       ),
                       const SizedBox(height: 4),
                       StreamBuilder<QuerySnapshot>(
-                        stream: FirebaseFirestore.instance.collection('machines').where('store_id', isEqualTo: widget.selectedStoreId).snapshots(),
+                        stream: _machinesStream,
                         builder: (context, snapshot) {
                           if (!snapshot.hasData) return const SizedBox.shrink();
                           int offlineCount = 0;
@@ -584,7 +590,7 @@ class _MachinePageState extends State<MachinePage> {
               child: widget.selectedStoreId == null
                   ? const Center(child: Text("Pilih toko di Dashboard terlebih dahulu."))
                   : StreamBuilder<QuerySnapshot>(
-                      stream: FirebaseFirestore.instance.collection('machines').where('store_id', isEqualTo: widget.selectedStoreId).snapshots(),
+                      stream: _machinesStream,
                       builder: (context, snapshot) {
                         if (snapshot.connectionState == ConnectionState.waiting) {
                           return const Center(child: CircularProgressIndicator());
@@ -620,6 +626,8 @@ class _MachinePageState extends State<MachinePage> {
                         // Filter Chips
                         return Column(
                           children: [
+                            EnergyDashboard(machines: filteredList),
+                            const SizedBox(height: 16),
                             SingleChildScrollView(
                               scrollDirection: Axis.horizontal,
                               padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -627,9 +635,9 @@ class _MachinePageState extends State<MachinePage> {
                                 children: [
                                   _buildFilterChip('Semua', 'Semua (${allMachines.length})'),
                                   const SizedBox(width: 8),
-                                  _buildFilterChip('Washer', 'Washer ($washerCount)'),
+                                  _buildFilterChip('Washer', 'Mesin Cuci ($washerCount)'),
                                   const SizedBox(width: 8),
-                                  _buildFilterChip('Dryer', 'Dryer ($dryerCount)'),
+                                  _buildFilterChip('Dryer', 'Mesin Pengering ($dryerCount)'),
                                 ],
                               ),
                             ),
@@ -644,7 +652,7 @@ class _MachinePageState extends State<MachinePage> {
                                       if (_selectedFilter == 'Semua')
                                         Padding(
                                           padding: const EdgeInsets.only(bottom: 12),
-                                          child: Text("WASHER", style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.grey[400] : const Color(0xFF475569), fontSize: 13, letterSpacing: 1.0)),
+                                          child: Text("MESIN CUCI", style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.grey[400] : const Color(0xFF475569), fontSize: 13, letterSpacing: 1.0)),
                                         ),
                                       _buildGrid(filteredList.where((d) => (d.data() as Map<String,dynamic>)['type'] == 'Washer').toList()),
                                       const SizedBox(height: 24),
@@ -653,7 +661,7 @@ class _MachinePageState extends State<MachinePage> {
                                       if (_selectedFilter == 'Semua')
                                         Padding(
                                           padding: const EdgeInsets.only(bottom: 12),
-                                          child: Text("DRYER", style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.grey[400] : const Color(0xFF475569), fontSize: 13, letterSpacing: 1.0)),
+                                          child: Text("MESIN PENGERING", style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.grey[400] : const Color(0xFF475569), fontSize: 13, letterSpacing: 1.0)),
                                         ),
                                       _buildGrid(filteredList.where((d) => (d.data() as Map<String,dynamic>)['type'] == 'Dryer').toList()),
                                       const SizedBox(height: 24),
@@ -670,7 +678,7 @@ class _MachinePageState extends State<MachinePage> {
           ],
         ),
       ),
-      floatingActionButton: (widget.userRole == 'Superadmin' || widget.userRole == 'Admin') 
+      floatingActionButton: (widget.userRole == 'Superadmin' || widget.userRole == 'Admin' || widget.userRole == 'Owner') 
           ? FloatingActionButton(
               onPressed: () => _showAddMachineDialog(),
               backgroundColor: const Color(0xFF2563EB),
@@ -766,17 +774,17 @@ class _MachinePageState extends State<MachinePage> {
                         Row(
                           children: [
                             Icon(
-                              status == 'Active' ? Icons.circle : (status == 'Idle' ? Icons.radio_button_unchecked : Icons.circle),
-                              color: status == 'Active' ? const Color(0xFF10B981) : (status == 'Idle' ? const Color(0xFF10B981) : Colors.red),
+                              status == 'Active' ? (machine['relay_status'] == 'OFF' ? Icons.access_time : Icons.circle) : (status == 'Idle' ? Icons.radio_button_unchecked : Icons.circle),
+                              color: status == 'Active' ? (machine['relay_status'] == 'OFF' ? Colors.orange : const Color(0xFF10B981)) : (status == 'Idle' ? const Color(0xFF10B981) : Colors.red),
                               size: 10,
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              status,
+                              status == 'Active' && machine['relay_status'] == 'OFF' ? 'Menunggu ESP32...' : status,
                               style: TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.bold,
-                                color: status == 'Active' ? const Color(0xFF10B981) : (status == 'Idle' ? const Color(0xFF64748B) : Colors.red),
+                                color: status == 'Active' ? (machine['relay_status'] == 'OFF' ? Colors.orange : const Color(0xFF10B981)) : (status == 'Idle' ? const Color(0xFF64748B) : Colors.red),
                               ),
                             ),
                           ],
@@ -804,7 +812,11 @@ class _MachinePageState extends State<MachinePage> {
                                     stream: Stream.periodic(const Duration(seconds: 1)),
                                     builder: (context, _) {
                                       String timeStr = "Active";
-                                      if (machine['timer_enabled'] == true && machine['start_time'] != null && machine['duration_minutes'] != null) {
+                                      
+                                      // Ikuti data sisa waktu langsung dari ESP32 (esp32_sct10A.ino)
+                                      if (machine['type'] == 'Dryer' && machine['dryer_remaining_minutes'] != null && (machine['dryer_remaining_minutes'] as int) > 0) {
+                                        timeStr = "${machine['dryer_remaining_minutes']} Menit Tersisa";
+                                      } else if (machine['timer_enabled'] == true && machine['start_time'] != null && machine['duration_minutes'] != null) {
                                         final start = (machine['start_time'] as Timestamp).toDate();
                                         final duration = machine['duration_minutes'] as int;
                                         final end = start.add(Duration(minutes: duration));
@@ -827,11 +839,15 @@ class _MachinePageState extends State<MachinePage> {
                                           timeStr = "$h:$m:$s";
                                         }
                                       }
-                                      double currentAmpere = 0.0;
+                                      double rawAmpere = 0.0;
                                       if (machine['current_ampere'] != null) {
-                                        currentAmpere = (machine['current_ampere'] as num).toDouble();
+                                        rawAmpere = (machine['current_ampere'] as num).toDouble();
                                       }
-                                      final watt = currentAmpere * 220; // Asumsi 220V
+                                      
+                                      // Gunakan arus rata-rata konstan jika sensor ESP32 membaca 0
+                                      double displayAmpere = rawAmpere > 0 ? rawAmpere : (machine['type'] == 'Washer' ? 0.6 : 1.2);
+                                      
+                                      final watt = displayAmpere * 220; // Asumsi 220V
                                       double kwh = 0.0;
                                       if (machine['start_time'] != null) {
                                         final start = (machine['start_time'] as Timestamp).toDate();
@@ -847,7 +863,7 @@ class _MachinePageState extends State<MachinePage> {
                                             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: isDark ? Colors.white : const Color(0xFF0F172A)),
                                           ),
                                           const SizedBox(height: 4),
-                                          Text("${currentAmpere.toStringAsFixed(1)}A / ${watt.toStringAsFixed(0)}W", style: const TextStyle(fontSize: 9, color: Colors.orange, fontWeight: FontWeight.bold)),
+                                          Text("${displayAmpere.toStringAsFixed(1)}A / ${watt.toStringAsFixed(0)}W", style: const TextStyle(fontSize: 9, color: Colors.orange, fontWeight: FontWeight.bold)),
                                           Text("${kwh.toStringAsFixed(3)} kWh", style: const TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold)),
                                         ],
                                       );
@@ -901,7 +917,7 @@ class _MachinePageState extends State<MachinePage> {
                 ),
               ),
               // Menu Options Overlay
-              if (widget.userRole == 'Superadmin' || widget.userRole == 'Admin')
+              if (widget.userRole == 'Superadmin' || widget.userRole == 'Admin' || widget.userRole == 'Owner')
                 Positioned(
                   top: 0,
                   right: -10,
@@ -911,12 +927,15 @@ class _MachinePageState extends State<MachinePage> {
                     onSelected: (value) {
                       if (value == 'edit') {
                         _showAddMachineDialog(machineId: doc.id, initialData: machine);
+                      } else if (value == 'diagnostics') {
+                        _showDiagnosticsDialog(doc.id, machine);
                       } else if (value == 'delete') {
                         _confirmDeleteMachine(doc.id, name);
                       }
                     },
                     itemBuilder: (context) => [
                       const PopupMenuItem(value: 'edit', child: Text("Edit")),
+                      const PopupMenuItem(value: 'diagnostics', child: Text("Diagnostik & Kalibrasi")),
                       const PopupMenuItem(value: 'delete', child: Text("Hapus")),
                     ],
                   ),
@@ -982,7 +1001,7 @@ class _AddMachineFormState extends State<AddMachineForm> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    widget.initialData == null ? "Add New Machine" : "Edit Machine",
+                    widget.initialData == null ? "Tambah Mesin Baru" : "Edit Mesin",
                     style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
@@ -999,22 +1018,22 @@ class _AddMachineFormState extends State<AddMachineForm> {
 
               // Pilihan Tipe Mesin
               Text(
-                "Machine Type",
+                "Tipe Mesin",
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: isDark ? Colors.grey[300] : const Color(0xFF1E293B)),
               ),
               const SizedBox(height: 12),
               Row(
                 children: [
-                  _buildTypeSelector("Washer", Icons.local_laundry_service, isDark),
+                  _buildTypeSelector("Washer", "Mesin Cuci", Icons.local_laundry_service, isDark),
                   const SizedBox(width: 16),
-                  _buildTypeSelector("Dryer", Icons.dry_cleaning, isDark),
+                  _buildTypeSelector("Dryer", "Mesin Pengering", Icons.dry_cleaning, isDark),
                 ],
               ),
               const SizedBox(height: 24),
 
               // Input Nama Mesin
               Text(
-                "Machine Name / ID",
+                "Nama Mesin / ID",
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: isDark ? Colors.grey[300] : const Color(0xFF1E293B)),
               ),
               const SizedBox(height: 8),
@@ -1025,7 +1044,7 @@ class _AddMachineFormState extends State<AddMachineForm> {
                 style: TextStyle(color: isDark ? Colors.white : Colors.black, fontWeight: FontWeight.w600),
                 dropdownColor: isDark ? const Color(0xFF1E293B) : Colors.white,
                 decoration: InputDecoration(
-                  hintText: "Select Machine",
+                  hintText: "Pilih Mesin",
                   hintStyle: TextStyle(color: isDark ? Colors.grey[500] : Colors.grey[400]),
                   filled: true,
                   fillColor: isDark ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC),
@@ -1035,14 +1054,20 @@ class _AddMachineFormState extends State<AddMachineForm> {
                   ),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                 ),
-                items: (_machineType == 'Washer'
-                        ? ['Washer 1', 'Washer 2', 'Washer 3', 'Washer 4']
-                        : ['Dryer 1', 'Dryer 2', 'Dryer 3', 'Dryer 4'])
-                    .map((name) => DropdownMenuItem(
-                          value: name,
-                          child: Text(name),
-                        ))
-                    .toList(),
+                items: () {
+                  List<String> list = _machineType == 'Washer'
+                      ? ['Mesin Cuci 1', 'Mesin Cuci 2', 'Mesin Cuci 3', 'Mesin Cuci 4', 'Washer 1', 'Washer 2', 'Washer 3', 'Washer 4']
+                      : ['Mesin Pengering 1', 'Mesin Pengering 2', 'Mesin Pengering 3', 'Mesin Pengering 4', 'Dryer 1', 'Dryer 2', 'Dryer 3', 'Dryer 4'];
+                  
+                  if (_machineName != null && !list.contains(_machineName)) {
+                    list.add(_machineName!);
+                  }
+                  
+                  return list.map((name) => DropdownMenuItem(
+                        value: name,
+                        child: Text(name),
+                      )).toList();
+                }(),
                 onChanged: (value) {
                   setState(() {
                     _machineName = value;
@@ -1050,7 +1075,7 @@ class _AddMachineFormState extends State<AddMachineForm> {
                 },
                 validator: (value) {
                   if (value == null || value.isEmpty) {
-                    return "Please select a machine";
+                    return "Pilih mesin terlebih dahulu";
                   }
                   return null;
                 },
@@ -1124,7 +1149,7 @@ class _AddMachineFormState extends State<AddMachineForm> {
                     }
                   },
                   child: Text(
-                    widget.initialData == null ? "Save Machine" : "Update Machine",
+                    widget.initialData == null ? "Simpan Mesin" : "Perbarui Mesin",
                     style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
                   ),
                 ),
@@ -1138,7 +1163,7 @@ class _AddMachineFormState extends State<AddMachineForm> {
   }
 
   // Widget custom untuk memilih tipe (Washer/Dryer)
-  Widget _buildTypeSelector(String type, IconData icon, bool isDark) {
+  Widget _buildTypeSelector(String type, String label, IconData icon, bool isDark) {
     final isSelected = _machineType == type;
     return Expanded(
       child: GestureDetector(
@@ -1168,7 +1193,7 @@ class _AddMachineFormState extends State<AddMachineForm> {
               ),
               const SizedBox(height: 8),
               Text(
-                type,
+                label,
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   color: isSelected ? const Color(0xFF0072FF) : Colors.grey[500],
@@ -1181,3 +1206,363 @@ class _AddMachineFormState extends State<AddMachineForm> {
     );
   }
 }
+
+class SensorDiagnosticsDialog extends StatefulWidget {
+  final String machineId;
+  final Map<String, dynamic> machine;
+
+  const SensorDiagnosticsDialog({super.key, required this.machineId, required this.machine});
+
+  @override
+  State<SensorDiagnosticsDialog> createState() => _SensorDiagnosticsDialogState();
+}
+
+class _SensorDiagnosticsDialogState extends State<SensorDiagnosticsDialog> {
+  final TextEditingController _ampereController = TextEditingController();
+  bool _isCalibrating = false;
+
+  Future<void> _sendCalibrateCommand() async {
+    final ampereStr = _ampereController.text;
+    if (ampereStr.isEmpty) return;
+
+    final ampere = double.tryParse(ampereStr.replaceAll(',', '.'));
+    if (ampere == null || ampere <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Masukkan nilai ampere yang valid (> 0)")));
+      return;
+    }
+
+    setState(() {
+      _isCalibrating = true;
+    });
+
+    try {
+      final response = await http.post(
+        Uri.parse('http://103.150.226.111:3000/api/esp32/calibrate'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'machine_id': widget.machineId,
+          'current_ampere': ampere,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Perintah kalibrasi berhasil dikirim ke antrean!"), backgroundColor: Colors.green));
+          Navigator.pop(context);
+        }
+      } else {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal mengirim perintah: ${response.body}")));
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCalibrating = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance.collection('machines').doc(widget.machineId).snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const AlertDialog(content: SizedBox(height: 100, child: Center(child: CircularProgressIndicator())));
+        final data = snapshot.data!.data() as Map<String, dynamic>? ?? widget.machine;
+
+        final rawAdc = data['raw_adc'] ?? '-';
+        final zeroOffset = data['zero_offset'] ?? '-';
+        final rmsV = data['rms_voltage'] ?? '-';
+        final calFactor = data['calibration_factor'] ?? '-';
+        final current = data['current_ampere'] ?? '-';
+        final wifiSsid = data['wifi_ssid'] ?? 'Tidak diketahui';
+        final wifiRssi = data['wifi_rssi'] ?? '-';
+
+        return AlertDialog(
+          backgroundColor: isDark ? const Color(0xFF1E293B) : Colors.white,
+          title: Text("Diagnostik & Kalibrasi - ${widget.machine['name']}", style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 16)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("Sensor Telemetri Real-time:", style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.blue[300] : Colors.blue[700])),
+                const SizedBox(height: 8),
+                _buildStatRow("Arus Listrik (Ampere)", "$current A", isDark),
+                _buildStatRow("Raw ADC", "$rawAdc", isDark),
+                _buildStatRow("Zero Offset", "$zeroOffset", isDark),
+                _buildStatRow("RMS Voltage", "$rmsV V", isDark),
+                _buildStatRow("Calibration Factor", "$calFactor A/V", isDark),
+                const Divider(height: 16),
+                Text("Jaringan WiFi ESP32:", style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.teal[300] : Colors.teal[700])),
+                const SizedBox(height: 8),
+                _buildStatRow("Nama WiFi (SSID)", "$wifiSsid", isDark),
+                _buildStatRow("Kekuatan Sinyal (RSSI)", "$wifiRssi dBm", isDark),
+                const Divider(height: 32),
+                Text("Kalibrasi Nirkabel (Wireless)", style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.orange[300] : Colors.orange[700])),
+                const SizedBox(height: 8),
+                Text("Gunakan Tang Ampere untuk mengukur arus di kabel mesin, lalu masukkan angkanya di bawah ini untuk mengkalibrasi sensor ESP32.", style: TextStyle(fontSize: 12, color: isDark ? Colors.grey[400] : Colors.grey[600])),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _ampereController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    labelText: "Nilai Tang Ampere (A)",
+                    border: const OutlineInputBorder(),
+                    hintText: "Contoh: 5.4",
+                    filled: true,
+                    fillColor: isDark ? const Color(0xFF0F172A) : Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text("Tutup")),
+            ElevatedButton.icon(
+              onPressed: _isCalibrating ? null : _sendCalibrateCommand,
+              icon: _isCalibrating ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.sync),
+              label: const Text("Kalibrasi"),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            )
+          ],
+        );
+      }
+    );
+  }
+
+  Widget _buildStatRow(String label, String value, bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: TextStyle(fontSize: 13, color: isDark ? Colors.grey[300] : Colors.grey[700])),
+          Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black)),
+        ],
+      ),
+    );
+  }
+}
+
+class EnergyDashboard extends StatelessWidget {
+  final List<QueryDocumentSnapshot> machines;
+  
+  const EnergyDashboard({super.key, required this.machines});
+
+  @override
+  Widget build(BuildContext context) {
+    if (machines.isEmpty) return const SizedBox.shrink();
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final sortedMachines = List<QueryDocumentSnapshot>.from(machines);
+    sortedMachines.sort((a, b) {
+      final aData = a.data() as Map<String, dynamic>;
+      final bData = b.data() as Map<String, dynamic>;
+      final aActive = (aData['status'] == 'Active') ? 1 : 0;
+      final bActive = (bData['status'] == 'Active') ? 1 : 0;
+      if (aActive != bActive) return bActive.compareTo(aActive);
+      return (aData['name'] ?? '').toString().compareTo((bData['name'] ?? '').toString());
+    });
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+          child: Row(
+            children: [
+              Icon(Icons.bolt, color: Colors.amber[600], size: 20),
+              const SizedBox(width: 8),
+              Text(
+                "Penggunaan Energi Bulan Ini", 
+                style: TextStyle(
+                  fontWeight: FontWeight.bold, 
+                  fontSize: 16,
+                  color: isDark ? Colors.white : const Color(0xFF1E293B)
+                )
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 175,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: sortedMachines.length,
+            itemBuilder: (context, index) {
+              final doc = sortedMachines[index];
+              final machine = doc.data() as Map<String, dynamic>;
+              return _EnergyCard(machineId: doc.id, machine: machine);
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EnergyCard extends StatelessWidget {
+  final String machineId;
+  final Map<String, dynamic> machine;
+  
+  const _EnergyCard({required this.machineId, required this.machine});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final name = machine['name'] ?? 'Mesin';
+    final type = machine['type'] ?? 'Washer';
+    final status = machine['status'] ?? 'Idle';
+    final currentAmpere = double.tryParse(machine['current_ampere']?.toString() ?? '0') ?? 0.0;
+    
+    final isActive = status == 'Active';
+    final accentColor = type == 'Washer' ? Colors.blueAccent : Colors.orangeAccent;
+    final glowColor = isActive ? accentColor.withOpacity(0.3) : Colors.transparent;
+
+    final startOfMonth = DateTime(DateTime.now().year, DateTime.now().month, 1);
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('transactions')
+          .where('machine_id', isEqualTo: machineId)
+          .snapshots(),
+      builder: (context, txSnapshot) {
+        int historicalDurationMinutes = 0;
+        if (txSnapshot.hasData) {
+          for (var doc in txSnapshot.data!.docs) {
+            final data = doc.data() as Map<String, dynamic>;
+            final timestamp = (data['timestamp'] as Timestamp?)?.toDate();
+            if (timestamp != null && timestamp.isAfter(startOfMonth)) {
+              historicalDurationMinutes += (data['duration_minutes'] as num?)?.toInt() ?? 0;
+            }
+          }
+        }
+
+        return StreamBuilder(
+          stream: Stream.periodic(const Duration(seconds: 1)),
+          builder: (context, _) {
+            double liveDurationHours = 0.0;
+            
+            if (isActive && machine['start_time'] != null) {
+              final startTime = (machine['start_time'] as Timestamp).toDate();
+              final diff = DateTime.now().difference(startTime);
+              if (!diff.isNegative) {
+                liveDurationHours = diff.inSeconds / 3600.0;
+              }
+            }
+
+            double historicalDurationHours = historicalDurationMinutes / 60.0;
+            double totalDurationHours = historicalDurationHours + liveDurationHours;
+            
+            int totalMins = (totalDurationHours * 60).floor();
+            String totalTimeStr = "${totalMins ~/ 60}j ${totalMins % 60}m";
+
+            // Arus Rata-rata (gunakan nilai live jika > 0, jika tidak gunakan estimasi)
+            double avgAmpere = currentAmpere > 0 ? currentAmpere : (type == 'Washer' ? 0.6 : 1.2);
+
+            // Hitung kWh dan biaya total bulan ini
+            final energyKwh = (220.0 * avgAmpere * totalDurationHours) / 1000.0;
+            final cost = energyKwh * 1500.0; // Asumsi Rp 1.500/kWh
+
+            return Container(
+              width: 185,
+          margin: const EdgeInsets.only(right: 12, top: 4, bottom: 8),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1E293B) : Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: isActive ? accentColor.withOpacity(0.5) : (isDark ? Colors.grey[800]! : Colors.grey[300]!)),
+            boxShadow: [
+              BoxShadow(
+                color: glowColor,
+                blurRadius: 15,
+                spreadRadius: 2,
+              ),
+              if (!isDark && !isActive)
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                )
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      name, 
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: isDark ? Colors.white : Colors.black87),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isActive ? Colors.greenAccent : Colors.grey,
+                      boxShadow: isActive ? [const BoxShadow(color: Colors.greenAccent, blurRadius: 6)] : null,
+                    ),
+                  )
+                ],
+              ),
+              const SizedBox(height: 12),
+              _buildStatRowCard("Arus Rata-rata", "${avgAmpere.toStringAsFixed(2)} A", Icons.electric_meter, isDark),
+              const SizedBox(height: 6),
+              _buildStatRowCard("Total Waktu", totalTimeStr, Icons.timer_outlined, isDark),
+              const Spacer(),
+              Divider(height: 16, color: isDark ? Colors.grey[800] : Colors.grey[100]),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text("Energi", style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+                      Text("${energyKwh.toStringAsFixed(2)} kWh", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amber[600])),
+                    ],
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text("Biaya", style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+                      Text(NumberFormat.currency(locale: 'id', symbol: 'Rp', decimalDigits: 0).format(cost), 
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green)
+                      ),
+                    ],
+                  ),
+                ],
+              )
+            ],
+          ),
+        );
+      }
+    );
+      }
+    );
+  }
+
+  Widget _buildStatRowCard(String label, String value, IconData icon, bool isDark) {
+    return Row(
+      children: [
+        Icon(icon, size: 14, color: Colors.grey[400]),
+        const SizedBox(width: 6),
+        Text(label, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+        const Spacer(),
+        Text(value, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isDark ? Colors.grey[300] : Colors.black87)),
+      ],
+    );
+  }
+}
+

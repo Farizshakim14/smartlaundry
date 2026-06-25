@@ -13,6 +13,53 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
+// Fungsi untuk mengirim Push Notification via FCM
+async function sendPushNotification(storeId, title, body) {
+    try {
+        const usersSnap = await db.collection('users').get();
+        let tokens = [];
+        usersSnap.forEach(doc => {
+            const data = doc.data();
+            // Kirim ke token FCM jika user adalah Owner, Superadmin, atau petugas di toko terkait
+            if (data.fcm_token) {
+                if (data.role === 'Superadmin' || data.role === 'Owner' || data.store_id === storeId) {
+                    tokens.push(data.fcm_token);
+                }
+            }
+        });
+
+        if (tokens.length > 0) {
+            // Hapus duplikat
+            tokens = [...new Set(tokens)];
+            const message = {
+                notification: { title: title, body: body },
+                tokens: tokens
+            };
+            const response = await admin.messaging().sendEachForMulticast(message);
+            console.log(`[FCM] Berhasil mengirim ${response.successCount} notifikasi Push.`);
+        }
+    } catch (error) {
+        console.error('[FCM] Error sending push notification:', error);
+    }
+}
+
+// Listener untuk otomatis mengirim Push Notification saat ada aktivitas baru
+const startupTime = Date.now();
+db.collection('activities').onSnapshot(snapshot => {
+    snapshot.docChanges().forEach(change => {
+        if (change.type === 'added') {
+            const data = change.doc.data();
+            // Hanya kirim notifikasi untuk aktivitas yang baru ditambahkan setelah server menyala
+            if (data.timestamp && data.timestamp.toMillis() > startupTime) {
+                const action = data.action || 'Aktivitas baru';
+                const storeId = data.store_id;
+                const userName = data.user_name || 'Sistem';
+                sendPushNotification(storeId, `Laundry: ${userName}`, action);
+            }
+        }
+    });
+});
+
 console.log("🚀 SERVER START...");
 
 const app = express();
@@ -48,6 +95,12 @@ app.post('/upload-logo', logoUpload.single('logo'), (req, res) => {
 
 // Midtrans config
 const snap = new midtransClient.Snap({
+    isProduction: false,
+    serverKey: 'Mid-server-J-qO' + 'tKtk4PFJqZrS2LZs-bHI',
+    clientKey: 'Mid-client-IT' + 'BiAY2rnRoo79J8'
+});
+
+const coreApi = new midtransClient.CoreApi({
     isProduction: false,
     serverKey: 'Mid-server-J-qO' + 'tKtk4PFJqZrS2LZs-bHI',
     clientKey: 'Mid-client-IT' + 'BiAY2rnRoo79J8'
@@ -112,6 +165,28 @@ app.get('/', (req, res) => {
     res.send("Server hidup dan terkoneksi dengan Firebase ✅");
 });
 
+// Proxy untuk mengambil gambar QRIS dari Midtrans agar tidak terkena CORS di Flutter Web
+app.get('/proxy-qr', async (req, res) => {
+    try {
+        const qrUrl = req.query.url;
+        if (!qrUrl) return res.status(400).send('No URL provided');
+        
+        const response = await fetch(qrUrl);
+        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
+        
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        
+        // Teruskan header content-type dari Midtrans (biasanya image/png)
+        res.setHeader('Content-Type', response.headers.get('content-type') || 'image/png');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.send(buffer);
+    } catch (e) {
+        console.error("Proxy QR Error:", e);
+        res.status(500).send(e.message);
+    }
+});
+
 app.post('/pay', async (req, res) => {
     try {
         const { price, store_id, package_name, tokens, valid_days } = req.body;
@@ -120,20 +195,22 @@ app.post('/pay', async (req, res) => {
         const orderId = 'ORDER-' + Date.now();
 
         const parameter = {
+            payment_type: 'qris',
             transaction_details: {
                 order_id: orderId,
                 gross_amount: price,
             },
             customer_details: {
                 first_name: store_id, // Simpan info toko
-            },
-            enabled_payments: [
-                "gopay",
-                "other_qris",
-                "shopeepay"
-            ]
+            }
         };
-        const transaction = await snap.createTransaction(parameter);
+        const transaction = await coreApi.charge(parameter);
+
+        let qrUrl = null;
+        if (transaction.actions && transaction.actions.length > 0) {
+            const action = transaction.actions.find(a => a.name === 'generate-qr-code');
+            if (action) qrUrl = action.url;
+        }
 
         // Simpan request ke Firebase sebagai Pending dengan ID orderId
         await db.collection('token_requests').doc(orderId).set({
@@ -148,8 +225,9 @@ app.post('/pay', async (req, res) => {
         });
 
         res.json({
-            token: transaction.token,
-            redirect_url: transaction.redirect_url
+            token: transaction.transaction_id,
+            qr_url: qrUrl,
+            order_id: orderId
         });
     } catch (err) {
         console.log("❌ ERROR:", err);
@@ -194,6 +272,7 @@ app.post('/pay-service', async (req, res) => {
         const orderId = 'SRV-' + Date.now();
 
         const parameter = {
+            payment_type: 'qris',
             transaction_details: {
                 order_id: orderId,
                 gross_amount: price,
@@ -201,10 +280,15 @@ app.post('/pay-service', async (req, res) => {
             customer_details: {
                 first_name: customer_name,
                 phone: customer_phone,
-            },
-            enabled_payments: ["gopay", "other_qris", "shopeepay"]
+            }
         };
-        const transaction = await snap.createTransaction(parameter);
+        const transaction = await coreApi.charge(parameter);
+
+        let qrUrl = null;
+        if (transaction.actions && transaction.actions.length > 0) {
+            const action = transaction.actions.find(a => a.name === 'generate-qr-code');
+            if (action) qrUrl = action.url;
+        }
 
         await db.collection('service_requests').doc(orderId).set({
             store_id: store_id,
@@ -222,8 +306,8 @@ app.post('/pay-service', async (req, res) => {
         });
 
         res.json({
-            token: transaction.token,
-            redirect_url: transaction.redirect_url,
+            token: transaction.transaction_id,
+            qr_url: qrUrl,
             order_id: orderId
         });
     } catch (err) {
@@ -566,9 +650,9 @@ app.get('/api/esp32/commands', (req, res) => {
 
     // Tentukan mesin mana saja yang dikontrol oleh ESP32 yang sedang me-request
     let validMachineIds = [];
-    if (deviceId === 'esp32_002') {
+    if (deviceId === 'esp32_001') {
         validMachineIds = [1, 2]; // Washer 1, Dryer 1
-    } else if (deviceId === 'esp32_001') {
+    } else if (deviceId === 'esp32_002') {
         validMachineIds = [3, 4]; // Washer 2, Dryer 2
     }
 
@@ -604,8 +688,12 @@ app.post('/api/esp32/data', async (req, res) => {
     const data = req.body;
     // console.log(`[ESP32 DATA] Diterima dari ${data.device_id}`);
 
-    // Fungsi helper untuk mencari doc ID Firebase berdasarkan espMachineId
+    // Cache untuk menghindari query database setiap 2 detik (Menghemat Kuota Firestore)
+    if (!global.machineIdCache) global.machineIdCache = {};
+
     const getDocIdByEspId = async (espId) => {
+        if (global.machineIdCache[espId]) return global.machineIdCache[espId];
+
         let targetName = "";
         if (espId === 1) targetName = 'washer 1';
         else if (espId === 2) targetName = 'dryer 1';
@@ -620,37 +708,78 @@ app.post('/api/esp32/data', async (req, res) => {
                     foundId = doc.id;
                 }
             });
-            if (foundId) return foundId;
+            if (foundId) {
+                global.machineIdCache[espId] = foundId;
+                return foundId;
+            }
         }
 
         const type = (espId === 1 || espId === 3) ? 'Washer' : 'Dryer';
         const snapshot = await db.collection('machines').where('type', '==', type).limit(1).get();
-        if (!snapshot.empty) return snapshot.docs[0].id;
+        if (!snapshot.empty) {
+            global.machineIdCache[espId] = snapshot.docs[0].id;
+            return snapshot.docs[0].id;
+        }
         return null;
+    };
+
+    // Helper untuk membatasi frekuensi Write (Update ke Firebase hanya setiap 10 detik atau jika status berubah)
+    if (!global.lastMachineUpdate) global.lastMachineUpdate = {};
+
+    const shouldUpdateFirebase = (docId, relayStatus, currentAmpere) => {
+        const now = Date.now();
+        const last = global.lastMachineUpdate[docId] || { time: 0, relay: null, ampere: 0 };
+        
+        // Selalu update jika status mesin (ON/OFF) berubah
+        if (last.relay !== relayStatus) return true;
+        
+        // Update jika ampere berubah drastis (>0.5A)
+        if (Math.abs(last.ampere - currentAmpere) > 0.5) return true;
+
+        // Selain itu, batasi update maksimal setiap 10 detik sekali (10000 ms)
+        if (now - last.time > 10000) return true;
+
+        return false;
     };
 
     try {
         // Update data untuk Channel 1
         if (data.channel1 && data.channel1.machine_id) {
             const docId = await getDocIdByEspId(data.channel1.machine_id);
-            if (docId) {
+            if (docId && shouldUpdateFirebase(docId, data.channel1.relay_status, data.channel1.current)) {
                 await db.collection('machines').doc(docId).update({
                     current_ampere: data.channel1.current,
                     relay_status: data.channel1.relay_status,
+                    raw_adc: data.channel1.raw_adc,
+                    zero_offset: data.channel1.zero_offset,
+                    rms_voltage: data.channel1.rms_voltage,
+                    calibration_factor: data.channel1.calibration_factor,
+                    dryer_remaining_minutes: data.channel1.dryer_remaining_minutes,
+                    wifi_ssid: data.wifi_ssid,
+                    wifi_rssi: data.wifi_rssi,
                     last_updated: admin.firestore.FieldValue.serverTimestamp()
                 });
+                global.lastMachineUpdate[docId] = { time: Date.now(), relay: data.channel1.relay_status, ampere: data.channel1.current };
             }
         }
 
         // Update data untuk Channel 2
         if (data.channel2 && data.channel2.machine_id) {
             const docId = await getDocIdByEspId(data.channel2.machine_id);
-            if (docId) {
+            if (docId && shouldUpdateFirebase(docId, data.channel2.relay_status, data.channel2.current)) {
                 await db.collection('machines').doc(docId).update({
                     current_ampere: data.channel2.current,
                     relay_status: data.channel2.relay_status,
+                    raw_adc: data.channel2.raw_adc,
+                    zero_offset: data.channel2.zero_offset,
+                    rms_voltage: data.channel2.rms_voltage,
+                    calibration_factor: data.channel2.calibration_factor,
+                    dryer_remaining_minutes: data.channel2.dryer_remaining_minutes,
+                    wifi_ssid: data.wifi_ssid,
+                    wifi_rssi: data.wifi_rssi,
                     last_updated: admin.firestore.FieldValue.serverTimestamp()
                 });
+                global.lastMachineUpdate[docId] = { time: Date.now(), relay: data.channel2.relay_status, ampere: data.channel2.current };
             }
         }
 
@@ -661,6 +790,56 @@ app.post('/api/esp32/data', async (req, res) => {
 
     } catch (error) {
         console.error("[FIREBASE UPDATE ERROR]", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 4. API Untuk Memicu Kalibrasi Nirkabel dari Aplikasi
+app.post('/api/esp32/calibrate', async (req, res) => {
+    const { machine_id, current_ampere } = req.body;
+
+    if (!machine_id || !current_ampere) {
+        return res.status(400).json({ success: false, message: 'Missing machine_id or current_ampere' });
+    }
+
+    try {
+        // Cari espMachineId berdasarkan firestore machine doc_id
+        const docSnap = await db.collection('machines').doc(machine_id).get();
+        if (!docSnap.exists) {
+            return res.status(404).json({ success: false, message: 'Machine not found' });
+        }
+
+        const data = docSnap.data();
+        let espMachineId = 0;
+        const mName = (data.name || "").toLowerCase();
+
+        if (mName.includes('washer 1')) espMachineId = 1;
+        else if (mName.includes('dryer 1')) espMachineId = 2;
+        else if (mName.includes('washer 2')) espMachineId = 3;
+        else if (mName.includes('dryer 2')) espMachineId = 4;
+        else if (data.type === 'Washer') espMachineId = 1;
+        else if (data.type === 'Dryer') espMachineId = 2;
+
+        if (espMachineId === 0) {
+            return res.status(400).json({ success: false, message: 'Cannot map to ESP machine ID' });
+        }
+
+        // duration_minutes digunakan sebagai tempat menaruh angka kalibrasi 
+        // Contoh: 5.4A dikali 100 = 540 agar jadi integer
+        const kalibrasiVal = Math.round(current_ampere * 100);
+
+        commandQueue.push({
+            command_id: commandIdCounter++,
+            machine_id: espMachineId,
+            command: 'CALIBRATE',
+            duration_minutes: kalibrasiVal,
+            firestore_doc_id: machine_id
+        });
+
+        console.log(`[CALIBRATE] Antrean kalibrasi untuk mesin ${espMachineId} dengan nilai ${current_ampere}A ditambahkan`);
+        res.json({ success: true, message: 'Calibration command queued successfully' });
+    } catch (error) {
+        console.error("[CALIBRATE ERROR]", error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
