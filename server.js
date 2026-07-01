@@ -123,18 +123,14 @@ db.collection('machines').onSnapshot(snapshot => {
         const data = doc.data();
         const machineId = doc.id;
 
-        // Pemetaan berdasarkan nama mesin
-        let espMachineId = 0;
-        const mName = (data.name || "").toLowerCase();
+        // Ambil pemetaan device_id dan relay_channel dari Firestore
+        const deviceId = data.device_id;
+        const relayChannel = data.relay_channel;
 
-        if (mName.includes('washer 1')) espMachineId = 1;
-        else if (mName.includes('dryer 1')) espMachineId = 2;
-        else if (mName.includes('washer 2')) espMachineId = 3;
-        else if (mName.includes('dryer 2')) espMachineId = 4;
-        else if (data.type === 'Washer') espMachineId = 1; // Fallback
-        else if (data.type === 'Dryer') espMachineId = 2; // Fallback
-
-        if (espMachineId === 0) return; // Abaikan jika tipe tidak diketahui
+        if (!deviceId || !relayChannel) {
+            // Abaikan mesin lama yang belum dikonfigurasi device_id & relay_channel-nya
+            return;
+        }
 
         if (change.type === 'added' || change.type === 'modified') {
             const currentStatus = data.status; // 'Active' atau 'Idle'
@@ -146,7 +142,8 @@ db.collection('machines').onSnapshot(snapshot => {
                 // Tambahkan perintah ke antrian ESP32
                 commandQueue.push({
                     command_id: commandIdCounter++,
-                    machine_id: espMachineId,
+                    machine_id: relayChannel,
+                    device_id: deviceId, // Disimpan untuk filter di antrean ESP32
                     command: currentStatus === 'Active' ? 'START' : 'STOP',
                     duration_minutes: data.duration_minutes || 0,
                     firestore_doc_id: machineId
@@ -648,17 +645,12 @@ app.post('/midtrans-webhook', async (req, res) => {
 app.get('/api/esp32/commands', (req, res) => {
     const deviceId = req.query.device_id;
 
-    // Tentukan mesin mana saja yang dikontrol oleh ESP32 yang sedang me-request
-    let validMachineIds = [];
-    if (deviceId === 'esp32_001') {
-        validMachineIds = [1, 2]; // Washer 1, Dryer 1
-    } else if (deviceId === 'esp32_002') {
-        validMachineIds = [3, 4]; // Washer 2, Dryer 2
+    if (!deviceId) {
+        return res.json({ commands: [] });
     }
 
-    // Filter antrian: hanya kirim perintah yang sesuai dengan mesin ESP32 ini
-    // (Jika deviceId tidak dikenali atau kosong, filteredCommands akan kosong)
-    const filteredCommands = commandQueue.filter(c => validMachineIds.includes(c.machine_id));
+    // Filter antrean berdasarkan device_id
+    const filteredCommands = commandQueue.filter(c => c.device_id === deviceId);
 
     res.json({
         commands: filteredCommands.map(c => ({
@@ -691,33 +683,20 @@ app.post('/api/esp32/data', async (req, res) => {
     // Cache untuk menghindari query database setiap 2 detik (Menghemat Kuota Firestore)
     if (!global.machineIdCache) global.machineIdCache = {};
 
-    const getDocIdByEspId = async (espId) => {
-        if (global.machineIdCache[espId]) return global.machineIdCache[espId];
+    const getDocIdByEspId = async (deviceId, relayChannel) => {
+        if (!deviceId || !relayChannel) return null;
+        
+        const cacheKey = `${deviceId}_${relayChannel}`;
+        if (global.machineIdCache[cacheKey]) return global.machineIdCache[cacheKey];
 
-        let targetName = "";
-        if (espId === 1) targetName = 'washer 1';
-        else if (espId === 2) targetName = 'dryer 1';
-        else if (espId === 3) targetName = 'washer 2';
-        else if (espId === 4) targetName = 'dryer 2';
+        const snapshot = await db.collection('machines')
+            .where('device_id', '==', deviceId)
+            .where('relay_channel', '==', relayChannel)
+            .limit(1)
+            .get();
 
-        if (targetName) {
-            const snapshot = await db.collection('machines').get();
-            let foundId = null;
-            snapshot.forEach(doc => {
-                if (doc.data().name && doc.data().name.toLowerCase().includes(targetName)) {
-                    foundId = doc.id;
-                }
-            });
-            if (foundId) {
-                global.machineIdCache[espId] = foundId;
-                return foundId;
-            }
-        }
-
-        const type = (espId === 1 || espId === 3) ? 'Washer' : 'Dryer';
-        const snapshot = await db.collection('machines').where('type', '==', type).limit(1).get();
         if (!snapshot.empty) {
-            global.machineIdCache[espId] = snapshot.docs[0].id;
+            global.machineIdCache[cacheKey] = snapshot.docs[0].id;
             return snapshot.docs[0].id;
         }
         return null;
@@ -743,45 +722,55 @@ app.post('/api/esp32/data', async (req, res) => {
     };
 
     try {
-        // Update data untuk Channel 1
-        if (data.channel1 && data.channel1.machine_id) {
-            const docId = await getDocIdByEspId(data.channel1.machine_id);
-            if (docId && shouldUpdateFirebase(docId, data.channel1.relay_status, data.channel1.current)) {
-                await db.collection('machines').doc(docId).update({
-                    current_ampere: data.channel1.current,
-                    relay_status: data.channel1.relay_status,
-                    raw_adc: data.channel1.raw_adc,
-                    zero_offset: data.channel1.zero_offset,
-                    rms_voltage: data.channel1.rms_voltage,
-                    calibration_factor: data.channel1.calibration_factor,
-                    dryer_remaining_minutes: data.channel1.dryer_remaining_minutes,
-                    wifi_ssid: data.wifi_ssid,
-                    wifi_rssi: data.wifi_rssi,
-                    last_updated: admin.firestore.FieldValue.serverTimestamp()
-                });
-                global.lastMachineUpdate[docId] = { time: Date.now(), relay: data.channel1.relay_status, ampere: data.channel1.current };
-            }
-        }
+        const now = Date.now();
+        const monthKey = new Date(now).toISOString().substring(0, 7); // YYYY-MM
+        const yearKey = new Date(now).toISOString().substring(0, 4); // YYYY
 
-        // Update data untuk Channel 2
-        if (data.channel2 && data.channel2.machine_id) {
-            const docId = await getDocIdByEspId(data.channel2.machine_id);
-            if (docId && shouldUpdateFirebase(docId, data.channel2.relay_status, data.channel2.current)) {
-                await db.collection('machines').doc(docId).update({
-                    current_ampere: data.channel2.current,
-                    relay_status: data.channel2.relay_status,
-                    raw_adc: data.channel2.raw_adc,
-                    zero_offset: data.channel2.zero_offset,
-                    rms_voltage: data.channel2.rms_voltage,
-                    calibration_factor: data.channel2.calibration_factor,
-                    dryer_remaining_minutes: data.channel2.dryer_remaining_minutes,
+        const updateChannel = async (channelData) => {
+            if (!channelData || !channelData.machine_id) return;
+            const docId = await getDocIdByEspId(data.device_id, channelData.machine_id);
+            if (!docId) return;
+
+            if (shouldUpdateFirebase(docId, channelData.relay_status, channelData.current)) {
+                const last = global.lastMachineUpdate[docId] || { time: now, relay: null, ampere: 0 };
+                let dtHours = 0;
+                if (last.time > 0 && last.time < now) {
+                    dtHours = (now - last.time) / 3600000;
+                }
+                
+                // Kalkulasi delta energy (kWh)
+                const currentAmpere = channelData.current || 0;
+                const energyKwhDelta = (currentAmpere * 220 * dtHours) / 1000;
+                const costDelta = energyKwhDelta * 1500;
+
+                const updatePayload = {
+                    current_ampere: channelData.current,
+                    relay_status: channelData.relay_status,
+                    raw_adc: channelData.raw_adc,
+                    zero_offset: channelData.zero_offset,
+                    rms_voltage: channelData.rms_voltage,
+                    calibration_factor: channelData.calibration_factor,
+                    dryer_remaining_minutes: channelData.dryer_remaining_minutes,
                     wifi_ssid: data.wifi_ssid,
                     wifi_rssi: data.wifi_rssi,
                     last_updated: admin.firestore.FieldValue.serverTimestamp()
-                });
-                global.lastMachineUpdate[docId] = { time: Date.now(), relay: data.channel2.relay_status, ampere: data.channel2.current };
+                };
+
+                // Hanya update energi jika mesin aktif dan mengkonsumsi arus
+                if (energyKwhDelta > 0) {
+                    updatePayload[`energy_monthly.${monthKey}`] = admin.firestore.FieldValue.increment(energyKwhDelta);
+                    updatePayload[`energy_yearly.${yearKey}`] = admin.firestore.FieldValue.increment(energyKwhDelta);
+                    updatePayload[`cost_monthly.${monthKey}`] = admin.firestore.FieldValue.increment(costDelta);
+                    updatePayload[`cost_yearly.${yearKey}`] = admin.firestore.FieldValue.increment(costDelta);
+                }
+
+                await db.collection('machines').doc(docId).update(updatePayload);
+                global.lastMachineUpdate[docId] = { time: now, relay: channelData.relay_status, ampere: channelData.current };
             }
-        }
+        };
+
+        await updateChannel(data.channel1);
+        await updateChannel(data.channel2);
 
         res.json({
             success: true,
@@ -810,18 +799,11 @@ app.post('/api/esp32/calibrate', async (req, res) => {
         }
 
         const data = docSnap.data();
-        let espMachineId = 0;
-        const mName = (data.name || "").toLowerCase();
+        const deviceId = data.device_id;
+        const relayChannel = data.relay_channel;
 
-        if (mName.includes('washer 1')) espMachineId = 1;
-        else if (mName.includes('dryer 1')) espMachineId = 2;
-        else if (mName.includes('washer 2')) espMachineId = 3;
-        else if (mName.includes('dryer 2')) espMachineId = 4;
-        else if (data.type === 'Washer') espMachineId = 1;
-        else if (data.type === 'Dryer') espMachineId = 2;
-
-        if (espMachineId === 0) {
-            return res.status(400).json({ success: false, message: 'Cannot map to ESP machine ID' });
+        if (!deviceId || !relayChannel) {
+            return res.status(400).json({ success: false, message: 'Machine does not have device_id or relay_channel configured' });
         }
 
         // duration_minutes digunakan sebagai tempat menaruh angka kalibrasi 
@@ -830,7 +812,8 @@ app.post('/api/esp32/calibrate', async (req, res) => {
 
         commandQueue.push({
             command_id: commandIdCounter++,
-            machine_id: espMachineId,
+            machine_id: relayChannel,
+            device_id: deviceId,
             command: 'CALIBRATE',
             duration_minutes: kalibrasiVal,
             firestore_doc_id: machine_id

@@ -1,3 +1,4 @@
+import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -100,7 +101,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       await FirebaseAuth.instance.currentUser?.updateDisplayName(name);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           const SnackBar(
             content: Text('Profil berhasil diperbarui!'),
             backgroundColor: Color(0xFF10B981),
@@ -110,7 +111,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           SnackBar(content: Text('Gagal memperbarui profil: $e'), backgroundColor: Colors.red),
         );
       }
@@ -211,3 +212,4 @@ class _EditProfilePageState extends State<EditProfilePage> {
     );
   }
 }
+

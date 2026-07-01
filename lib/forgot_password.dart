@@ -1,3 +1,4 @@
+import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -16,7 +17,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     final email = _emailController.text.trim();
 
     if (email.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      CustomSnackbar.show(context, 
         const SnackBar(
           content: Text("Email tidak boleh kosong.", style: TextStyle(color: Colors.white)),
           backgroundColor: Colors.red,
@@ -33,7 +34,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
       
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           const SnackBar(
             content: Text("Link reset password telah dikirim ke email Anda. Silakan cek Inbox atau Spam."),
             backgroundColor: Colors.green,
@@ -52,13 +53,13 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       }
       
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           SnackBar(content: Text(message), backgroundColor: Colors.red),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           SnackBar(content: Text("Terjadi kesalahan: $e"), backgroundColor: Colors.red),
         );
       }
@@ -285,3 +286,4 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     );
   }
 }
+

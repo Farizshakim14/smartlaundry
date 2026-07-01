@@ -1,3 +1,4 @@
+import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -17,7 +18,7 @@ class _MasterPelangganPageState extends State<MasterPelangganPage> {
 
   void _showCustomerDialog({String? docId, Map<String, dynamic>? customerData}) {
     if (widget.selectedStoreId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pilih toko terlebih dahulu.')));
+      CustomSnackbar.show(context, const SnackBar(content: Text('Pilih toko terlebih dahulu.')));
       return;
     }
     showModalBottomSheet(

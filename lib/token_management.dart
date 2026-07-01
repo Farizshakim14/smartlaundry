@@ -1,3 +1,4 @@
+import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
@@ -54,7 +55,7 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
           'created_at': FieldValue.serverTimestamp(),
         });
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          CustomSnackbar.show(context, 
             SnackBar(
               content: Text('Paket "${newPackage['name']}" berhasil ditambahkan!'),
               backgroundColor: const Color(0xFF10B981), // Emerald
@@ -80,7 +81,7 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
 
   void _confirmBuyToken(Map<String, dynamic> package) {
     if (widget.selectedStoreId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      CustomSnackbar.show(context, 
         const SnackBar(
           content: Text('Toko belum dipilih. Pilih toko terlebih dahulu di Dashboard.'),
           backgroundColor: Colors.red,
@@ -361,7 +362,7 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
                           OutlinedButton.icon(
                             onPressed: () {
                               Clipboard.setData(ClipboardData(text: qrUrl));
-                              ScaffoldMessenger.of(context).showSnackBar(
+                              CustomSnackbar.show(context, 
                                 const SnackBar(content: Text('URL QR berhasil disalin! (Gunakan untuk download/testing)')),
                               );
                             },
@@ -394,7 +395,7 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
                       sub?.cancel();
                       if (mounted) {
                         Navigator.pop(context); // Tutup dialog QR
-                        ScaffoldMessenger.of(context).showSnackBar(
+                        CustomSnackbar.show(context, 
                           const SnackBar(content: Text('Pembayaran berhasil! Token ditambahkan.'), backgroundColor: Colors.green),
                         );
                       }
@@ -402,7 +403,7 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
                       sub?.cancel();
                       if (mounted) {
                         Navigator.pop(context); // Tutup dialog QR
-                        ScaffoldMessenger.of(context).showSnackBar(
+                        CustomSnackbar.show(context, 
                           const SnackBar(content: Text('Pembayaran dibatalkan atau kedaluwarsa.'), backgroundColor: Colors.red),
                         );
                       }
@@ -419,7 +420,7 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
         );
       }
@@ -466,14 +467,14 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
 
       if (mounted) {
         Navigator.pop(context); // loading
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           const SnackBar(content: Text("Request berhasil di-approve!"), backgroundColor: Colors.green),
         );
       }
     } catch (e) {
       if (mounted) {
         Navigator.pop(context); // loading
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           SnackBar(content: Text("Gagal approve: $e"), backgroundColor: Colors.red),
         );
       }
@@ -1688,7 +1689,7 @@ class _ManualTransferDialogState extends State<ManualTransferDialog> {
 
   Future<void> _submitTransfer() async {
     if (_selectedFile == null || _fileBytes == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pilih foto bukti transfer terlebih dahulu.")));
+      CustomSnackbar.show(context, const SnackBar(content: Text("Pilih foto bukti transfer terlebih dahulu.")));
       return;
     }
 
@@ -1734,7 +1735,7 @@ class _ManualTransferDialogState extends State<ManualTransferDialog> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+        CustomSnackbar.show(context, SnackBar(content: Text('Error: $e')));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -2111,3 +2112,4 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
     );
   }
 }
+

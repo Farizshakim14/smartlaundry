@@ -1,3 +1,4 @@
+import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -71,13 +72,13 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       await user?.sendEmailVerification();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           const SnackBar(content: Text("Link verifikasi telah dikirim ke email Anda. Cek kotak masuk / spam."), backgroundColor: Colors.blue),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           SnackBar(content: Text("Gagal mengirim email: $e"), backgroundColor: Colors.red),
         );
       }
@@ -87,7 +88,7 @@ class _SettingsPageState extends State<SettingsPage> {
   // Fungsi sederhana untuk OTP SMS
   Future<void> _verifyPhoneNumber() async {
     if (phoneNumber == null || phoneNumber!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      CustomSnackbar.show(context, 
         const SnackBar(content: Text("Isi nomor WA/HP di Edit Profil terlebih dahulu."), backgroundColor: Colors.orange),
       );
       return;
@@ -106,7 +107,7 @@ class _SettingsPageState extends State<SettingsPage> {
         await _markPhoneAsVerified();
       },
       verificationFailed: (FirebaseAuthException e) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           SnackBar(content: Text("Verifikasi gagal: ${e.message}"), backgroundColor: Colors.red),
         );
       },
@@ -147,7 +148,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 await _markPhoneAsVerified();
                 if (mounted) Navigator.pop(context);
               } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Kode OTP salah!"), backgroundColor: Colors.red));
+                CustomSnackbar.show(context, const SnackBar(content: Text("Kode OTP salah!"), backgroundColor: Colors.red));
               }
             },
             child: const Text("Verifikasi"),
@@ -164,7 +165,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     // Listener will automatically update the UI
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Nomor HP berhasil diverifikasi!"), backgroundColor: Colors.green));
+      CustomSnackbar.show(context, const SnackBar(content: Text("Nomor HP berhasil diverifikasi!"), backgroundColor: Colors.green));
     }
   }
 
@@ -384,3 +385,4 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 }
+

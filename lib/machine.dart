@@ -1,3 +1,4 @@
+import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:aplikasilaundry/activity_service.dart';
@@ -187,11 +188,11 @@ class _MachinePageState extends State<MachinePage> {
                   style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB)),
                   onPressed: () async {
                     if (enableTimer && duration <= 0) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Durasi harus lebih dari 0 menit')));
+                      CustomSnackbar.show(context, const SnackBar(content: Text('Durasi harus lebih dari 0 menit')));
                       return;
                     }
                     if (selectedBatchId == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pilih token terlebih dahulu')));
+                      CustomSnackbar.show(context, const SnackBar(content: Text('Pilih token terlebih dahulu')));
                       return;
                     }
                     Navigator.pop(context);
@@ -220,7 +221,7 @@ class _MachinePageState extends State<MachinePage> {
 
     if (remainingTokens < 1) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           const SnackBar(
             content: Text("Token tidak cukup! Silakan beli token terlebih dahulu."),
             backgroundColor: Colors.red,
@@ -266,10 +267,10 @@ class _MachinePageState extends State<MachinePage> {
     });
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("${machine['name']} dimulai! Saldo terpotong 1 Token.")));
+      CustomSnackbar.show(context, SnackBar(content: Text("${machine['name']} dimulai! Saldo terpotong 1 Token.")));
 
       if (newBalance <= 5) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           SnackBar(
             content: Text("Peringatan: Token Anda sisa $newBalance. Segera beli token baru!"),
             backgroundColor: Colors.orange,
@@ -358,11 +359,11 @@ class _MachinePageState extends State<MachinePage> {
           }
         }
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error Midtrans: ${response.body}")));
+        CustomSnackbar.show(context, SnackBar(content: Text("Error Midtrans: ${response.body}")));
       }
     } catch (e) {
       if (mounted) Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal menghubungi server: $e")));
+      CustomSnackbar.show(context, SnackBar(content: Text("Gagal menghubungi server: $e")));
     }
   }
 
@@ -381,14 +382,14 @@ class _MachinePageState extends State<MachinePage> {
     );
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("$machineName dihentikan!")));
+      CustomSnackbar.show(context, SnackBar(content: Text("$machineName dihentikan!")));
     }
   }
 
   // Membuka form tambah/edit mesin (BottomSheet)
   void _showAddMachineDialog({String? machineId, Map<String, dynamic>? initialData}) {
     if (widget.selectedStoreId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pilih toko terlebih dahulu.')));
+      CustomSnackbar.show(context, const SnackBar(content: Text('Pilih toko terlebih dahulu.')));
       return;
     }
     showModalBottomSheet(
@@ -415,7 +416,7 @@ class _MachinePageState extends State<MachinePage> {
         
         // Tampilkan notifikasi sukses
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          CustomSnackbar.show(context, 
             SnackBar(
               content: Text('${newMachine["name"]} berhasil ${machineId == null ? "ditambahkan" : "diperbarui"}!'),
               backgroundColor: const Color(0xFF10B981),
@@ -447,7 +448,7 @@ class _MachinePageState extends State<MachinePage> {
               );
               if (mounted) {
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
+                CustomSnackbar.show(context, 
                   SnackBar(content: Text("Mesin '$machineName' berhasil dihapus!")),
                 );
               }
@@ -678,7 +679,7 @@ class _MachinePageState extends State<MachinePage> {
           ],
         ),
       ),
-      floatingActionButton: (widget.userRole == 'Superadmin' || widget.userRole == 'Admin' || widget.userRole == 'Owner') 
+      floatingActionButton: (widget.userRole == 'Superadmin' || widget.userRole == 'Admin') 
           ? FloatingActionButton(
               onPressed: () => _showAddMachineDialog(),
               backgroundColor: const Color(0xFF2563EB),
@@ -917,7 +918,7 @@ class _MachinePageState extends State<MachinePage> {
                 ),
               ),
               // Menu Options Overlay
-              if (widget.userRole == 'Superadmin' || widget.userRole == 'Admin' || widget.userRole == 'Owner')
+              if (widget.userRole == 'Superadmin' || widget.userRole == 'Admin')
                 Positioned(
                   top: 0,
                   right: -10,
@@ -963,7 +964,8 @@ class _AddMachineFormState extends State<AddMachineForm> {
   final _formKey = GlobalKey<FormState>();
   String? _machineName;
   String _machineType = "Washer"; // Nilai default
-  int? _machinePrice;
+  String? _deviceId = "esp32_001";
+  int _relayChannel = 1;
 
   @override
   void initState() {
@@ -971,7 +973,8 @@ class _AddMachineFormState extends State<AddMachineForm> {
     if (widget.initialData != null) {
       _machineName = widget.initialData!['name'];
       _machineType = widget.initialData!['type'] ?? 'Washer';
-      _machinePrice = widget.initialData!['price'];
+      _deviceId = widget.initialData!['device_id'] ?? 'esp32_001';
+      _relayChannel = widget.initialData!['relay_channel'] ?? 1;
     }
   }
 
@@ -980,6 +983,9 @@ class _AddMachineFormState extends State<AddMachineForm> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     
     return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.85,
+      ),
       // Padding agar form tidak tertutup keyboard
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
@@ -990,8 +996,9 @@ class _AddMachineFormState extends State<AddMachineForm> {
       ),
       child: Padding(
         padding: const EdgeInsets.all(32.0),
-        child: Form(
-          key: _formKey,
+        child: SingleChildScrollView(
+          child: Form(
+            key: _formKey,
           child: Column(
             mainAxisSize: MainAxisSize.min, // Sesuaikan tinggi dengan konten
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1056,8 +1063,8 @@ class _AddMachineFormState extends State<AddMachineForm> {
                 ),
                 items: () {
                   List<String> list = _machineType == 'Washer'
-                      ? ['Mesin Cuci 1', 'Mesin Cuci 2', 'Mesin Cuci 3', 'Mesin Cuci 4', 'Washer 1', 'Washer 2', 'Washer 3', 'Washer 4']
-                      : ['Mesin Pengering 1', 'Mesin Pengering 2', 'Mesin Pengering 3', 'Mesin Pengering 4', 'Dryer 1', 'Dryer 2', 'Dryer 3', 'Dryer 4'];
+                      ? ['Mesin Cuci 1', 'Mesin Cuci 2', 'Mesin Cuci 3', 'Mesin Cuci 4']
+                      : ['Mesin Pengering 1', 'Mesin Pengering 2', 'Mesin Pengering 3', 'Mesin Pengering 4'];
                   
                   if (_machineName != null && !list.contains(_machineName)) {
                     list.add(_machineName!);
@@ -1085,18 +1092,17 @@ class _AddMachineFormState extends State<AddMachineForm> {
               ),
               const SizedBox(height: 24),
 
-              // Input Harga
+              // Input Device ID ESP32
               Text(
-                "Harga per Pemakaian (Rp)",
+                "Device ID (ESP32)",
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: isDark ? Colors.grey[300] : const Color(0xFF1E293B)),
               ),
               const SizedBox(height: 8),
               TextFormField(
-                initialValue: _machinePrice?.toString(),
-                keyboardType: TextInputType.number,
+                initialValue: _deviceId,
                 style: TextStyle(color: isDark ? Colors.white : Colors.black),
                 decoration: InputDecoration(
-                  hintText: "Contoh: 15000",
+                  hintText: "Contoh: esp32_tokoA_01",
                   hintStyle: TextStyle(color: isDark ? Colors.grey[500] : Colors.grey[400]),
                   filled: true,
                   fillColor: isDark ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC),
@@ -1108,15 +1114,48 @@ class _AddMachineFormState extends State<AddMachineForm> {
                 ),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
-                    return "Masukkan harga mesin";
-                  }
-                  if (int.tryParse(value) == null) {
-                    return "Masukkan angka yang valid";
+                    return "Masukkan Device ID";
                   }
                   return null;
                 },
                 onSaved: (value) {
-                  _machinePrice = int.parse(value!);
+                  _deviceId = value;
+                },
+              ),
+              const SizedBox(height: 24),
+
+              // Input Relay Channel
+              Text(
+                "Relay Channel (Socket ESP32)",
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: isDark ? Colors.grey[300] : const Color(0xFF1E293B)),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<int>(
+                value: _relayChannel,
+                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF3B82F6)),
+                borderRadius: BorderRadius.circular(16),
+                style: TextStyle(color: isDark ? Colors.white : Colors.black, fontWeight: FontWeight.w600),
+                dropdownColor: isDark ? const Color(0xFF1E293B) : Colors.white,
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: isDark ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 1, child: Text("Channel 1 (CH1)")),
+                  DropdownMenuItem(value: 2, child: Text("Channel 2 (CH2)")),
+                ],
+                onChanged: (value) {
+                  setState(() {
+                    if (value != null) _relayChannel = value;
+                  });
+                },
+                onSaved: (value) {
+                  if (value != null) _relayChannel = value;
                 },
               ),
               const SizedBox(height: 32),
@@ -1134,18 +1173,47 @@ class _AddMachineFormState extends State<AddMachineForm> {
                     elevation: 5,
                     shadowColor: const Color(0xFF0072FF).withOpacity(0.4),
                   ),
-                  onPressed: () {
+                  onPressed: () async {
                     // Validasi form
                     if (_formKey.currentState!.validate()) {
                       _formKey.currentState!.save();
-                      // Kembalikan data mesin baru ke halaman sebelumnya
-                      Navigator.pop(context, {
-                        "name": _machineName,
-                        "type": _machineType,
-                        if (widget.initialData == null) "status": "Idle", // Status bawaan jika baru
-                        "store_id": widget.selectedStoreId,
-                        "price": _machinePrice,
-                      });
+                      
+                      showDialog(
+                        context: context,
+                        barrierDismissible: false,
+                        builder: (context) => const Center(child: CircularProgressIndicator()),
+                      );
+                      
+                      try {
+                        final storeDoc = await FirebaseFirestore.instance.collection('stores').doc(widget.selectedStoreId).get();
+                        int price = 0;
+                        if (storeDoc.exists) {
+                          final storeData = storeDoc.data() as Map<String, dynamic>;
+                          if (_machineType == 'Washer') {
+                            price = storeData['price_washer'] ?? 0;
+                          } else {
+                            price = storeData['price_dryer'] ?? 0;
+                          }
+                        }
+                        
+                        if (mounted) Navigator.pop(context);
+                        
+                        // Kembalikan data mesin baru ke halaman sebelumnya
+                        Navigator.pop(context, {
+                          "name": _machineName,
+                          "type": _machineType,
+                          if (widget.initialData == null) "status": "Idle", // Status bawaan jika baru
+                          "store_id": widget.selectedStoreId,
+                          "price": price,
+                          "device_id": _deviceId,
+                          "relay_channel": _relayChannel,
+                        });
+                      } catch (e) {
+                        if (mounted) {
+                          Navigator.pop(context);
+                          CustomSnackbar.show(context, SnackBar(content: Text('Error: $e')));
+                        }
+                      }
                     }
                   },
                   child: Text(
@@ -1157,6 +1225,7 @@ class _AddMachineFormState extends State<AddMachineForm> {
               const SizedBox(height: 16),
             ],
           ),
+        ),
         ),
       ),
     );
@@ -1227,7 +1296,7 @@ class _SensorDiagnosticsDialogState extends State<SensorDiagnosticsDialog> {
 
     final ampere = double.tryParse(ampereStr.replaceAll(',', '.'));
     if (ampere == null || ampere <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Masukkan nilai ampere yang valid (> 0)")));
+      CustomSnackbar.show(context, const SnackBar(content: Text("Masukkan nilai ampere yang valid (> 0)")));
       return;
     }
 
@@ -1247,14 +1316,14 @@ class _SensorDiagnosticsDialogState extends State<SensorDiagnosticsDialog> {
 
       if (response.statusCode == 200) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Perintah kalibrasi berhasil dikirim ke antrean!"), backgroundColor: Colors.green));
+          CustomSnackbar.show(context, const SnackBar(content: Text("Perintah kalibrasi berhasil dikirim ke antrean!"), backgroundColor: Colors.green));
           Navigator.pop(context);
         }
       } else {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal mengirim perintah: ${response.body}")));
+        if (mounted) CustomSnackbar.show(context, SnackBar(content: Text("Gagal mengirim perintah: ${response.body}")));
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      if (mounted) CustomSnackbar.show(context, SnackBar(content: Text("Error: $e")));
     } finally {
       if (mounted) {
         setState(() {
@@ -1349,18 +1418,25 @@ class _SensorDiagnosticsDialogState extends State<SensorDiagnosticsDialog> {
   }
 }
 
-class EnergyDashboard extends StatelessWidget {
+class EnergyDashboard extends StatefulWidget {
   final List<QueryDocumentSnapshot> machines;
   
   const EnergyDashboard({super.key, required this.machines});
 
   @override
+  State<EnergyDashboard> createState() => _EnergyDashboardState();
+}
+
+class _EnergyDashboardState extends State<EnergyDashboard> {
+  String _selectedPeriod = 'Bulan Ini';
+
+  @override
   Widget build(BuildContext context) {
-    if (machines.isEmpty) return const SizedBox.shrink();
+    if (widget.machines.isEmpty) return const SizedBox.shrink();
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final sortedMachines = List<QueryDocumentSnapshot>.from(machines);
+    final sortedMachines = List<QueryDocumentSnapshot>.from(widget.machines);
     sortedMachines.sort((a, b) {
       final aData = a.data() as Map<String, dynamic>;
       final bData = b.data() as Map<String, dynamic>;
@@ -1376,22 +1452,42 @@ class EnergyDashboard extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
           child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Icon(Icons.bolt, color: Colors.amber[600], size: 20),
-              const SizedBox(width: 8),
-              Text(
-                "Penggunaan Energi Bulan Ini", 
-                style: TextStyle(
-                  fontWeight: FontWeight.bold, 
-                  fontSize: 16,
-                  color: isDark ? Colors.white : const Color(0xFF1E293B)
-                )
+              Row(
+                children: [
+                  Icon(Icons.bolt, color: Colors.amber[600], size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    "Penggunaan Energi", 
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold, 
+                      fontSize: 16,
+                      color: isDark ? Colors.white : const Color(0xFF1E293B)
+                    )
+                  ),
+                ],
+              ),
+              DropdownButton<String>(
+                value: _selectedPeriod,
+                underline: const SizedBox(),
+                icon: const Icon(Icons.arrow_drop_down, size: 20),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isDark ? Colors.blue[300] : Colors.blue[700]),
+                dropdownColor: isDark ? const Color(0xFF1E293B) : Colors.white,
+                items: const [
+                  DropdownMenuItem(value: 'Bulan Ini', child: Text('Bulan Ini')),
+                  DropdownMenuItem(value: 'Bulan Kemarin', child: Text('Bulan Kemarin')),
+                  DropdownMenuItem(value: 'Tahun Ini', child: Text('Tahun Ini')),
+                ],
+                onChanged: (val) {
+                  if (val != null) setState(() => _selectedPeriod = val);
+                },
               ),
             ],
           ),
         ),
         SizedBox(
-          height: 175,
+          height: 140, // Reduced height because we removed some stats
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1399,7 +1495,7 @@ class EnergyDashboard extends StatelessWidget {
             itemBuilder: (context, index) {
               final doc = sortedMachines[index];
               final machine = doc.data() as Map<String, dynamic>;
-              return _EnergyCard(machineId: doc.id, machine: machine);
+              return _EnergyCard(machineId: doc.id, machine: machine, selectedPeriod: _selectedPeriod);
             },
           ),
         ),
@@ -1411,8 +1507,9 @@ class EnergyDashboard extends StatelessWidget {
 class _EnergyCard extends StatelessWidget {
   final String machineId;
   final Map<String, dynamic> machine;
+  final String selectedPeriod;
   
-  const _EnergyCard({required this.machineId, required this.machine});
+  const _EnergyCard({required this.machineId, required this.machine, required this.selectedPeriod});
 
   @override
   Widget build(BuildContext context) {
@@ -1426,130 +1523,103 @@ class _EnergyCard extends StatelessWidget {
     final accentColor = type == 'Washer' ? Colors.blueAccent : Colors.orangeAccent;
     final glowColor = isActive ? accentColor.withOpacity(0.3) : Colors.transparent;
 
-    final startOfMonth = DateTime(DateTime.now().year, DateTime.now().month, 1);
+    String targetKey = '';
+    Map<String, dynamic> energyMap = {};
+    Map<String, dynamic> costMap = {};
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('transactions')
-          .where('machine_id', isEqualTo: machineId)
-          .snapshots(),
-      builder: (context, txSnapshot) {
-        int historicalDurationMinutes = 0;
-        if (txSnapshot.hasData) {
-          for (var doc in txSnapshot.data!.docs) {
-            final data = doc.data() as Map<String, dynamic>;
-            final timestamp = (data['timestamp'] as Timestamp?)?.toDate();
-            if (timestamp != null && timestamp.isAfter(startOfMonth)) {
-              historicalDurationMinutes += (data['duration_minutes'] as num?)?.toInt() ?? 0;
-            }
-          }
-        }
+    final now = DateTime.now();
+    if (selectedPeriod == 'Bulan Ini') {
+      targetKey = DateFormat('yyyy-MM').format(now);
+      energyMap = machine['energy_monthly'] as Map<String, dynamic>? ?? {};
+      costMap = machine['cost_monthly'] as Map<String, dynamic>? ?? {};
+    } else if (selectedPeriod == 'Bulan Kemarin') {
+      final lastMonth = DateTime(now.year, now.month - 1, 1);
+      targetKey = DateFormat('yyyy-MM').format(lastMonth);
+      energyMap = machine['energy_monthly'] as Map<String, dynamic>? ?? {};
+      costMap = machine['cost_monthly'] as Map<String, dynamic>? ?? {};
+    } else if (selectedPeriod == 'Tahun Ini') {
+      targetKey = DateFormat('yyyy').format(now);
+      energyMap = machine['energy_yearly'] as Map<String, dynamic>? ?? {};
+      costMap = machine['cost_yearly'] as Map<String, dynamic>? ?? {};
+    }
 
-        return StreamBuilder(
-          stream: Stream.periodic(const Duration(seconds: 1)),
-          builder: (context, _) {
-            double liveDurationHours = 0.0;
-            
-            if (isActive && machine['start_time'] != null) {
-              final startTime = (machine['start_time'] as Timestamp).toDate();
-              final diff = DateTime.now().difference(startTime);
-              if (!diff.isNegative) {
-                liveDurationHours = diff.inSeconds / 3600.0;
-              }
-            }
+    final energyKwh = (energyMap[targetKey] as num?)?.toDouble() ?? 0.0;
+    final cost = (costMap[targetKey] as num?)?.toDouble() ?? 0.0;
 
-            double historicalDurationHours = historicalDurationMinutes / 60.0;
-            double totalDurationHours = historicalDurationHours + liveDurationHours;
-            
-            int totalMins = (totalDurationHours * 60).floor();
-            String totalTimeStr = "${totalMins ~/ 60}j ${totalMins % 60}m";
-
-            // Arus Rata-rata (gunakan nilai live jika > 0, jika tidak gunakan estimasi)
-            double avgAmpere = currentAmpere > 0 ? currentAmpere : (type == 'Washer' ? 0.6 : 1.2);
-
-            // Hitung kWh dan biaya total bulan ini
-            final energyKwh = (220.0 * avgAmpere * totalDurationHours) / 1000.0;
-            final cost = energyKwh * 1500.0; // Asumsi Rp 1.500/kWh
-
-            return Container(
-              width: 185,
-          margin: const EdgeInsets.only(right: 12, top: 4, bottom: 8),
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1E293B) : Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: isActive ? accentColor.withOpacity(0.5) : (isDark ? Colors.grey[800]! : Colors.grey[300]!)),
-            boxShadow: [
-              BoxShadow(
-                color: glowColor,
-                blurRadius: 15,
-                spreadRadius: 2,
-              ),
-              if (!isDark && !isActive)
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                )
-            ],
+    return Container(
+      width: 170,
+      margin: const EdgeInsets.only(right: 12, top: 4, bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E293B) : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: isActive ? accentColor.withOpacity(0.5) : (isDark ? Colors.grey[800]! : Colors.grey[300]!)),
+        boxShadow: [
+          BoxShadow(
+            color: glowColor,
+            blurRadius: 15,
+            spreadRadius: 2,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          if (!isDark && !isActive)
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            )
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Text(
-                      name, 
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: isDark ? Colors.white : Colors.black87),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: isActive ? Colors.greenAccent : Colors.grey,
-                      boxShadow: isActive ? [const BoxShadow(color: Colors.greenAccent, blurRadius: 6)] : null,
-                    ),
-                  )
-                ],
+              Expanded(
+                child: Text(
+                  name, 
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: isDark ? Colors.white : Colors.black87),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              const SizedBox(height: 12),
-              _buildStatRowCard("Arus Rata-rata", "${avgAmpere.toStringAsFixed(2)} A", Icons.electric_meter, isDark),
-              const SizedBox(height: 6),
-              _buildStatRowCard("Total Waktu", totalTimeStr, Icons.timer_outlined, isDark),
-              const Spacer(),
-              Divider(height: 16, color: isDark ? Colors.grey[800] : Colors.grey[100]),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text("Energi", style: TextStyle(fontSize: 10, color: Colors.grey[500])),
-                      Text("${energyKwh.toStringAsFixed(2)} kWh", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amber[600])),
-                    ],
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text("Biaya", style: TextStyle(fontSize: 10, color: Colors.grey[500])),
-                      Text(NumberFormat.currency(locale: 'id', symbol: 'Rp', decimalDigits: 0).format(cost), 
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green)
-                      ),
-                    ],
-                  ),
-                ],
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isActive ? Colors.greenAccent : Colors.grey,
+                  boxShadow: isActive ? [const BoxShadow(color: Colors.greenAccent, blurRadius: 6)] : null,
+                ),
               )
             ],
           ),
-        );
-      }
-    );
-      }
+          const SizedBox(height: 12),
+          _buildStatRowCard("Arus Saat Ini", "${currentAmpere.toStringAsFixed(2)} A", Icons.electric_meter, isDark),
+          const Spacer(),
+          Divider(height: 16, color: isDark ? Colors.grey[800] : Colors.grey[100]),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text("Energi", style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+                  Text("${energyKwh.toStringAsFixed(2)} kWh", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amber[600])),
+                ],
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text("Biaya", style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+                  Text(NumberFormat.currency(locale: 'id', symbol: 'Rp', decimalDigits: 0).format(cost), 
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.green)
+                  ),
+                ],
+              ),
+            ],
+          )
+        ],
+      ),
     );
   }
 
@@ -1565,4 +1635,5 @@ class _EnergyCard extends StatelessWidget {
     );
   }
 }
+
 

@@ -1,3 +1,4 @@
+import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -177,7 +178,7 @@ class _StatsPageState extends State<StatsPage> {
                   IconButton(
                     onPressed: () {
                       if (_selectedFilterStoreId == null) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pilih salah satu cabang terlebih dahulu untuk menambah transaksi manual.")));
+                        CustomSnackbar.show(context, const SnackBar(content: Text("Pilih salah satu cabang terlebih dahulu untuk menambah transaksi manual.")));
                         return;
                       }
                       _showAddTransactionDialog(context, isDark);
@@ -832,7 +833,7 @@ class _StatsPageState extends State<StatsPage> {
                           final amountText = amountController.text.trim();
                           
                           if (title.isEmpty || amountText.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
+                            CustomSnackbar.show(context, 
                               const SnackBar(content: Text("Harap isi semua kolom")),
                             );
                             return;
@@ -840,7 +841,7 @@ class _StatsPageState extends State<StatsPage> {
                           
                           final int? amount = int.tryParse(amountText);
                           if (amount == null || amount <= 0) {
-                            ScaffoldMessenger.of(context).showSnackBar(
+                            CustomSnackbar.show(context, 
                               const SnackBar(content: Text("Nominal tidak valid")),
                             );
                             return;
@@ -867,13 +868,13 @@ class _StatsPageState extends State<StatsPage> {
                             
                             if (context.mounted) {
                               Navigator.pop(context);
-                              ScaffoldMessenger.of(context).showSnackBar(
+                              CustomSnackbar.show(context, 
                                 SnackBar(content: Text(docId == null ? "Transaksi berhasil ditambahkan" : "Transaksi berhasil diubah")),
                               );
                             }
                           } catch (e) {
                             if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
+                              CustomSnackbar.show(context, 
                                 SnackBar(content: Text("Gagal menyimpan data: $e")),
                               );
                             }
@@ -901,3 +902,4 @@ class _StatsPageState extends State<StatsPage> {
     );
   }
 }
+

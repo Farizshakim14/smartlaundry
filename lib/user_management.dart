@@ -1,3 +1,4 @@
+import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -59,7 +60,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
     final allowedRoles = _getAllowedRoles();
     
     if (allowedRoles.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      CustomSnackbar.show(context, 
         const SnackBar(
           content: Text('Anda tidak memiliki izin untuk membuat pengguna baru.'),
           backgroundColor: Color(0xFFEF4444),
@@ -82,7 +83,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
         await FirebaseFirestore.instance.collection('users').add(newUser);
         
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          CustomSnackbar.show(context, 
             SnackBar(
               content: Text('${newUser["name"]} berhasil ditambahkan sebagai ${newUser["role"]}!'),
               backgroundColor: const Color(0xFF10B981),
@@ -164,14 +165,14 @@ class _UserManagementPageState extends State<UserManagementPage> {
                 
                 if (mounted) {
                   Navigator.pop(context); // Tutup loading dialog
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  CustomSnackbar.show(context, 
                     SnackBar(content: Text('Akun $name berhasil dihapus secara bersih'), backgroundColor: Colors.green),
                   );
                 }
               } catch (e) {
                 if (mounted) {
                   Navigator.pop(context); // Tutup loading dialog
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  CustomSnackbar.show(context, 
                     SnackBar(content: Text('Gagal menghapus: $e'), backgroundColor: Colors.red),
                   );
                 }
@@ -612,3 +613,4 @@ class _AddUserFormState extends State<AddUserForm> {
     );
   }
 }
+

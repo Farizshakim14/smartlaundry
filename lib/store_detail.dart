@@ -1,3 +1,4 @@
+import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -128,12 +129,12 @@ class _StoreDetailPageState extends State<StoreDetailPage> {
                             
                             if (mounted) {
                               Navigator.pop(context);
-                              ScaffoldMessenger.of(context).showSnackBar(
+                              CustomSnackbar.show(context, 
                                 const SnackBar(content: Text('Cashier added successfully!'), backgroundColor: Color(0xFF10B981)),
                               );
                             }
                           } catch (e) {
-                            ScaffoldMessenger.of(context).showSnackBar(
+                            CustomSnackbar.show(context, 
                               SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
                             );
                           }
@@ -313,3 +314,4 @@ class _StoreDetailPageState extends State<StoreDetailPage> {
     );
   }
 }
+

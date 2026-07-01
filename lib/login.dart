@@ -1,3 +1,4 @@
+import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -62,7 +63,7 @@ class _LoginPageState extends State<LoginPage> {
           await FirebaseAuth.instance.signOut();
           if (mounted) {
             Navigator.pop(context);
-            ScaffoldMessenger.of(context).showSnackBar(
+            CustomSnackbar.show(context, 
               const SnackBar(
                 content: Text("Akses Ditolak: Akun Anda belum didaftarkan oleh Admin."),
                 backgroundColor: Colors.red,
@@ -84,7 +85,7 @@ class _LoginPageState extends State<LoginPage> {
     } catch (e) {
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           SnackBar(
             content: Text("Login gagal: $e"),
             backgroundColor: Colors.red,
@@ -99,7 +100,7 @@ class _LoginPageState extends State<LoginPage> {
     final password = _passwordController.text.trim();
 
     if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      CustomSnackbar.show(context, 
         const SnackBar(content: Text("Email dan password tidak boleh kosong.", style: TextStyle(color: Colors.white))),
       );
       return;
@@ -120,7 +121,7 @@ class _LoginPageState extends State<LoginPage> {
       if (querySnapshot.docs.isEmpty) {
         if (mounted) {
           Navigator.pop(context);
-          ScaffoldMessenger.of(context).showSnackBar(
+          CustomSnackbar.show(context, 
             const SnackBar(
               content: Text("Akses Ditolak: Akun Anda belum didaftarkan oleh Admin."),
               backgroundColor: Colors.red,
@@ -151,14 +152,14 @@ class _LoginPageState extends State<LoginPage> {
         } else if (e.code == 'wrong-password') {
           message = "Password salah.";
         }
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           SnackBar(content: Text(message), backgroundColor: Colors.red),
         );
       }
     } catch (e) {
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           SnackBar(content: Text("Terjadi kesalahan: $e"), backgroundColor: Colors.red),
         );
       }

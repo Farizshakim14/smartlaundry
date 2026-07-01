@@ -1,3 +1,4 @@
+import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:aplikasilaundry/settings.dart';
@@ -279,7 +280,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                     setState(() {
                                       _notificationsEnabled = val;
                                     });
-                                    ScaffoldMessenger.of(context).showSnackBar(
+                                    CustomSnackbar.show(context, 
                                       SnackBar(content: Text(val ? "Notifikasi Diaktifkan" : "Notifikasi Dinonaktifkan")),
                                     );
                                   }, 
@@ -289,7 +290,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                   setState(() {
                                     _notificationsEnabled = !_notificationsEnabled;
                                   });
-                                  ScaffoldMessenger.of(context).showSnackBar(
+                                  CustomSnackbar.show(context, 
                                     SnackBar(content: Text(_notificationsEnabled ? "Notifikasi Diaktifkan" : "Notifikasi Dinonaktifkan")),
                                   );
                                 }
@@ -423,3 +424,4 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 }
+

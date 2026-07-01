@@ -1,3 +1,4 @@
+import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:aplikasilaundry/live_machine_item.dart';
 import 'package:flutter/material.dart';
 import 'package:aplikasilaundry/localization.dart';
@@ -227,7 +228,7 @@ class _DashboardPageState extends State<DashboardPage> {
           _playNotificationSound();
           
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
+            CustomSnackbar.show(context, 
               SnackBar(
                 content: Row(
                   children: [
@@ -272,7 +273,7 @@ class _DashboardPageState extends State<DashboardPage> {
         onStoreChanged: (val) => setState(() => _selectedStoreId = val),
         onViewAllMachines: () => setState(() => _selectedIndex = 1),
       ),
-      MachinePage(selectedStoreId: _selectedStoreId, userRole: _effectiveRole),
+      MachinePage(selectedStoreId: _selectedStoreId, userRole: _userRole ?? 'Unknown'),
       MasterPelangganPage(selectedStoreId: _selectedStoreId),
       StatsPage(selectedStoreId: _selectedStoreId, userRole: _effectiveRole, myStores: _myStores),
       ProfilePage(selectedStoreId: _selectedStoreId),
@@ -677,3 +678,4 @@ class _AnimatedTokenCardState extends State<AnimatedTokenCard> with SingleTicker
     );
   }
 }
+

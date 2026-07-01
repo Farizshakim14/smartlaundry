@@ -1,3 +1,4 @@
+import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -69,13 +70,13 @@ class _StoreManagementPageState extends State<StoreManagementPage> {
                 
                 if (mounted) {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  CustomSnackbar.show(context, 
                     const SnackBar(content: Text('Store dan seluruh data terkait berhasil dihapus'), backgroundColor: Colors.red),
                   );
                 }
               } catch (e) {
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  CustomSnackbar.show(context, 
                     SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
                   );
                 }
@@ -481,7 +482,26 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
       };
 
       if (widget.existingStore != null) {
-        await FirebaseFirestore.instance.collection('stores').doc(widget.existingStore!.id).update(storeData);
+        final storeRef = FirebaseFirestore.instance.collection('stores').doc(widget.existingStore!.id);
+        await storeRef.update(storeData);
+        
+        // Update all machines prices for this store
+        final machinesSnap = await FirebaseFirestore.instance.collection('machines').where('store_id', isEqualTo: widget.existingStore!.id).get();
+        if (machinesSnap.docs.isNotEmpty) {
+          final batch = FirebaseFirestore.instance.batch();
+          int washerPrice = int.tryParse(_priceWasher) ?? 0;
+          int dryerPrice = int.tryParse(_priceDryer) ?? 0;
+          for (var doc in machinesSnap.docs) {
+            final mData = doc.data();
+            if (mData['type'] == 'Washer') {
+              batch.update(doc.reference, {'price': washerPrice});
+            } else if (mData['type'] == 'Dryer') {
+              batch.update(doc.reference, {'price': dryerPrice});
+            }
+          }
+          await batch.commit();
+        }
+
         await ActivityService.logActivity(
           storeId: widget.existingStore!.id,
           action: "Mengubah profil toko ($_name)",
@@ -497,13 +517,13 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
 
       if (mounted) {
         Navigator.pop(context); // Tutup bottom sheet
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           SnackBar(content: Text(widget.existingStore != null ? 'Toko diperbarui!' : 'Toko ditambahkan!'), backgroundColor: const Color(0xFF10B981)),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        CustomSnackbar.show(context, 
           SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
         );
       }
@@ -885,3 +905,4 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
     );
   }
 }
+

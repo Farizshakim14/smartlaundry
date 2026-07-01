@@ -1,3 +1,4 @@
+import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -21,9 +22,87 @@ class CustomerModePage extends StatefulWidget {
 }
 
 class _CustomerModePageState extends State<CustomerModePage> {
-  // Simpan timer yang sedang berjalan untuk animasi mundur
   Map<String, Timer> _machineTimers = {};
   Map<String, int> _remainingSeconds = {};
+  String _currentPin = "1234";
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAndForcePinSetup();
+  }
+
+  Future<void> _checkAndForcePinSetup() async {
+    final storeRef = FirebaseFirestore.instance.collection('stores').doc(widget.storeId);
+    final storeSnap = await storeRef.get();
+    
+    if (storeSnap.exists) {
+      final data = storeSnap.data();
+      if (data != null && data.containsKey('customer_mode_pin') && data['customer_mode_pin'].toString().isNotEmpty) {
+        _currentPin = data['customer_mode_pin'];
+      } else {
+        // Force setup PIN
+        if (mounted) {
+          _showForceSetupPinDialog();
+        }
+      }
+    }
+  }
+
+  void _showForceSetupPinDialog() {
+    final pinController = TextEditingController();
+    showDialog(
+      context: context,
+      barrierDismissible: false, // Wajib disetup
+      builder: (context) {
+        return WillPopScope(
+          onWillPop: () async => false, // Tidak bisa ditutup dengan back button
+          child: AlertDialog(
+            title: const Text("Buat PIN Mode Pelanggan"),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text("Anda belum mengatur PIN untuk Mode Pelanggan di cabang ini. Silakan buat PIN (minimal 4 angka) agar admin bisa keluar dari mode ini nantinya."),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: pinController,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: "Masukkan PIN Baru", border: OutlineInputBorder()),
+                ),
+              ],
+            ),
+            actions: [
+              ElevatedButton(
+                onPressed: () async {
+                  if (pinController.text.length < 4) {
+                    CustomSnackbar.show(context, const SnackBar(content: Text("PIN harus minimal 4 angka!"), backgroundColor: Colors.red));
+                    return;
+                  }
+                  
+                  // Simpan ke Firestore
+                  await FirebaseFirestore.instance.collection('stores').doc(widget.storeId).set({
+                    'customer_mode_pin': pinController.text,
+                  }, SetOptions(merge: true));
+                  
+                  setState(() {
+                    _currentPin = pinController.text;
+                  });
+                  
+                  if (mounted) {
+                    CustomSnackbar.show(context, const SnackBar(content: Text("PIN berhasil dibuat!"), backgroundColor: Colors.green));
+                    Navigator.pop(context);
+                  }
+                },
+                child: const Text("Simpan PIN"),
+              )
+            ],
+          ),
+        );
+      }
+    );
+  }
+
 
   @override
   void dispose() {
@@ -102,7 +181,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
     }
 
     if (selectedBatchId == null) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Maaf, layanan sedang tidak tersedia (Token toko habis). Silakan lapor kasir.")));
+      if (mounted) CustomSnackbar.show(context, const SnackBar(content: Text("Maaf, layanan sedang tidak tersedia (Token toko habis). Silakan lapor kasir.")));
       return;
     }
 
@@ -145,11 +224,11 @@ class _CustomerModePageState extends State<CustomerModePage> {
         }
 
       } else {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal mendapatkan QRIS: ${response.body}")));
+        if (mounted) CustomSnackbar.show(context, SnackBar(content: Text("Gagal mendapatkan QRIS: ${response.body}")));
       }
     } catch (e) {
       if (mounted) Navigator.pop(context); // Tutup loading
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal menghubungi server: $e")));
+      if (mounted) CustomSnackbar.show(context, SnackBar(content: Text("Gagal menghubungi server: $e")));
     }
   }
 
@@ -189,7 +268,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
                 OutlinedButton.icon(
                   onPressed: () {
                     Clipboard.setData(ClipboardData(text: qrUrl));
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    CustomSnackbar.show(context, 
                       const SnackBar(content: Text('URL QR berhasil disalin! (Gunakan untuk download/testing)')),
                     );
                   },
@@ -589,7 +668,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
                       }
 
                       if (washQty == 0 && dryQty == 0) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pilih minimal 1 layanan Cuci atau Kering")));
+                        CustomSnackbar.show(context, const SnackBar(content: Text("Pilih minimal 1 layanan Cuci atau Kering")));
                         return;
                       }
 
@@ -640,7 +719,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
               );
               
               if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Mesin ${machine['name']} dimulai!")));
+                CustomSnackbar.show(context, SnackBar(content: Text("Mesin ${machine['name']} dimulai!")));
               }
             },
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB)),
@@ -925,11 +1004,11 @@ class _CustomerModePageState extends State<CustomerModePage> {
                                                   TextButton(onPressed: () => Navigator.pop(context), child: const Text("Batal")),
                                                   ElevatedButton(
                                                     onPressed: () {
-                                                      if (pinController.text == "1234") {
+                                                      if (pinController.text == _currentPin) {
                                                         Navigator.pop(context);
                                                         Navigator.pop(context);
                                                       } else {
-                                                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("PIN Salah!")));
+                                                        CustomSnackbar.show(context, const SnackBar(content: Text("PIN Salah!"), backgroundColor: Colors.red));
                                                       }
                                                     },
                                                     child: const Text("Keluar"),
@@ -978,3 +1057,4 @@ class _CustomerModePageState extends State<CustomerModePage> {
     );
   }
 }
+
