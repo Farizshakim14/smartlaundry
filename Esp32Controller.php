@@ -102,12 +102,12 @@ class Esp32Controller extends Controller
                 // for the energy_monthly / energy_yearly maps as previously done in Node.js.
                 // Since this requires a dynamic key update, let's update Firestore using Firebase Admin SDK.
                 
-                $monthKey = date('Y-m');
-                $yearKey = date('Y');
-                $costDelta = $energyKwhDelta * 1500;
+                // $monthKey = date('Y-m');
+                // $yearKey = date('Y');
+                // $costDelta = $energyKwhDelta * 1500;
 
-                $firestore = app('firebase.firestore')->database();
-                $docRef = $firestore->collection('machines')->document($machine->id); // Assuming MySQL ID matches Firestore ID or they are mapped
+                // $firestore = app('firebase.firestore')->database();
+                // $docRef = $firestore->collection('machines')->document($machine->id); // Assuming MySQL ID matches Firestore ID or they are mapped
                 
                 // Wait, MySQL IDs are numeric (1, 2, 3), Firestore IDs are strings like "L49X..."
                 // Since we migrated the machines from Firestore, did we keep the string IDs or use integers?

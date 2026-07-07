@@ -325,6 +325,9 @@ class _MachinePageState extends State<MachinePage> {
     if (mounted) {
       CustomSnackbar.show(context, SnackBar(content: Text("${machine['name']} dimulai! Saldo terpotong 1 Token.")));
 
+      // Refresh list mesin agar UI langsung terupdate (fallback jika RTDB listener mati)
+      _initStream();
+
       if (newBalance <= 5) {
         CustomSnackbar.show(context, 
           SnackBar(
@@ -440,6 +443,7 @@ class _MachinePageState extends State<MachinePage> {
 
     if (mounted) {
       CustomSnackbar.show(context, SnackBar(content: Text("$machineName dihentikan!")));
+      _initStream();
     }
   }
 
@@ -873,7 +877,7 @@ class _MachinePageState extends State<MachinePage> {
                     Expanded(
                       child: Row(
                         children: [
-                          Image.asset('assets/machine_card_icon.png', width: 45, fit: BoxFit.contain),
+                          Image.asset('assets/app_icon.png', width: 45, fit: BoxFit.contain),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Column(
@@ -937,8 +941,8 @@ class _MachinePageState extends State<MachinePage> {
                                         rawAmpere = (machine['current'] as num).toDouble();
                                       }
                                       
-                                      // Gunakan arus rata-rata konstan jika sensor ESP32 membaca 0
-                                      double displayAmpere = rawAmpere > 0 ? rawAmpere : (machine['type'] == 'Washer' ? 0.6 : 1.2);
+                                      // Gunakan arus real-time asli dari ESP32
+                                      double displayAmpere = rawAmpere;
                                       
                                       final watt = displayAmpere * 220; // Asumsi 220V
                                       double kwh = 0.0;
