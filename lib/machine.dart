@@ -7,6 +7,8 @@ import 'dart:convert';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:aplikasilaundry/services/api_service.dart';
 
 class MachinePage extends StatefulWidget {
   final String? selectedStoreId;
@@ -21,11 +23,13 @@ class _MachinePageState extends State<MachinePage> {
   String _searchQuery = '';
   String _selectedFilter = 'Semua';
 
-  Stream<QuerySnapshot>? _machinesStream;
+  StreamController<List<Map<String, dynamic>>>? _machinesController;
+  StreamSubscription? _rtdbSubscription;
 
   @override
   void initState() {
     super.initState();
+    _machinesController = StreamController<List<Map<String, dynamic>>>.broadcast();
     _initStream();
   }
 
@@ -37,12 +41,62 @@ class _MachinePageState extends State<MachinePage> {
     }
   }
 
-  void _initStream() {
-    if (widget.selectedStoreId != null) {
-      _machinesStream = FirebaseFirestore.instance.collection('machines').where('store_id', isEqualTo: widget.selectedStoreId).snapshots();
-    } else {
-      _machinesStream = null;
+  @override
+  void dispose() {
+    _rtdbSubscription?.cancel();
+    _machinesController?.close();
+    super.dispose();
+  }
+
+  void _initStream() async {
+    _rtdbSubscription?.cancel();
+
+    if (widget.selectedStoreId == null) {
+      return;
     }
+
+    if (_machinesController == null || _machinesController!.isClosed) {
+      _machinesController = StreamController<List<Map<String, dynamic>>>.broadcast();
+      setState(() {});
+    }
+
+    String? storeIdForApi = (widget.selectedStoreId == 'ALL') ? null : widget.selectedStoreId;
+
+    // 1. Fetch from Laravel
+    List<Map<String, dynamic>> mysqlMachines = await ApiService().getMachines(storeId: storeIdForApi);
+
+    if (mysqlMachines.isEmpty) {
+      _machinesController?.add([]);
+    } else {
+      _machinesController?.add(List.from(mysqlMachines));
+    }
+
+    // 2. Listen to RTDB
+    _rtdbSubscription = FirebaseDatabase.instance.ref('machines').onValue.listen((event) {
+      if (event.snapshot.value != null && mysqlMachines.isNotEmpty) {
+        final rtdbData = Map<String, dynamic>.from(event.snapshot.value as Map);
+        
+        for (var i = 0; i < mysqlMachines.length; i++) {
+          final mId = mysqlMachines[i]['id'].toString();
+          final rtdbKey = 'Mesin$mId';
+          if (rtdbData.containsKey(rtdbKey)) {
+            final statusData = Map<String, dynamic>.from(rtdbData[rtdbKey] as Map);
+            mysqlMachines[i]['status'] = statusData['status'] ?? mysqlMachines[i]['status'];
+            mysqlMachines[i]['relay_status'] = statusData['relay_status'] ?? mysqlMachines[i]['relay_status'];
+            mysqlMachines[i]['timer_enabled'] = statusData['timer_enabled'];
+            mysqlMachines[i]['duration_minutes'] = statusData['duration_minutes'];
+            if (statusData.containsKey('current_ampere')) {
+              mysqlMachines[i]['current_ampere'] = statusData['current_ampere'];
+            } else if (statusData.containsKey('current')) {
+              mysqlMachines[i]['current_ampere'] = statusData['current'];
+            }
+          }
+        }
+        if (_machinesController != null && !_machinesController!.isClosed) {
+            _machinesController?.add(List.from(mysqlMachines));
+        }
+      }
+    });
   }
 
   void _showPlayMachineDialog(String machineId, Map<String, dynamic> machine) {
@@ -238,13 +292,15 @@ class _MachinePageState extends State<MachinePage> {
     final now = FieldValue.serverTimestamp();
     
     // Update status mesin
-    await FirebaseFirestore.instance.collection('machines').doc(machineId).update({
-      'status': 'Active',
-      'timer_enabled': enableTimer,
-      'duration_minutes': enableTimer ? duration : 0,
-      'start_time': now,
-      'payment_method': paymentMethod,
-    });
+    final apiRes = await ApiService().startMachine(machineId, enableTimer, enableTimer ? duration : 0);
+    if (!apiRes['success']) {
+      // Revert token if API fails
+      await batchRef.update({'remaining_tokens': remainingTokens});
+      if (mounted) {
+        CustomSnackbar.show(context, SnackBar(content: Text("Gagal menyalakan mesin: ${apiRes['message']}")));
+      }
+      return;
+    }
 
     // Catat ke log aktivitas
     await ActivityService.logActivity(
@@ -289,7 +345,7 @@ class _MachinePageState extends State<MachinePage> {
     );
 
     try {
-      const String serverUrl = 'http://103.150.226.111:3000/pay-machine';
+      const String serverUrl = 'http://103.150.226.111/node/pay-machine';
       final response = await http.post(
         Uri.parse(serverUrl),
         headers: {'Content-Type': 'application/json'},
@@ -368,13 +424,14 @@ class _MachinePageState extends State<MachinePage> {
   }
 
   Future<void> _stopMachine(String machineId, String machineName) async {
-    await FirebaseFirestore.instance.collection('machines').doc(machineId).update({
-      'status': 'Idle',
-      'timer_enabled': FieldValue.delete(),
-      'duration_minutes': FieldValue.delete(),
-      'start_time': FieldValue.delete(),
-      'payment_method': FieldValue.delete(),
-    });
+    final apiRes = await ApiService().stopMachine(machineId);
+
+    if (!apiRes['success']) {
+      if (mounted) {
+        CustomSnackbar.show(context, SnackBar(content: Text("Gagal menghentikan mesin: ${apiRes['message']}")));
+      }
+      return;
+    }
 
     await ActivityService.logActivity(
       storeId: widget.selectedStoreId,
@@ -398,21 +455,35 @@ class _MachinePageState extends State<MachinePage> {
       backgroundColor: Colors.transparent,
       builder: (context) => AddMachineForm(selectedStoreId: widget.selectedStoreId!, initialData: initialData),
     ).then((newMachine) async {
-      // Jika form dikembalikan (submit) dengan data baru, tambahkan/update ke Firestore
+      // Jika form dikembalikan (submit) dengan data baru, tambahkan/update ke API MySQL
       if (newMachine != null) {
+        newMachine['store_id'] = widget.selectedStoreId;
         if (machineId == null) {
-          await FirebaseFirestore.instance.collection('machines').add(newMachine);
-          await ActivityService.logActivity(
-            storeId: widget.selectedStoreId,
-            action: "Menambahkan mesin baru (${newMachine['type']} - ${newMachine['name']})",
-          );
+          final res = await ApiService().addMachine(newMachine);
+          if (res['success']) {
+            await ActivityService.logActivity(
+              storeId: widget.selectedStoreId,
+              action: "Menambahkan mesin baru (${newMachine['type']} - ${newMachine['name']})",
+            );
+          } else {
+            if (mounted) CustomSnackbar.show(context, SnackBar(content: Text('Gagal: ${res["message"]}')));
+            return;
+          }
         } else {
-          await FirebaseFirestore.instance.collection('machines').doc(machineId).update(newMachine);
-          await ActivityService.logActivity(
-            storeId: widget.selectedStoreId,
-            action: "Mengubah data mesin (${newMachine['type']} - ${newMachine['name']})",
-          );
+          final res = await ApiService().updateMachine(machineId, newMachine);
+          if (res['success']) {
+            await ActivityService.logActivity(
+              storeId: widget.selectedStoreId,
+              action: "Mengubah data mesin (${newMachine['type']} - ${newMachine['name']})",
+            );
+          } else {
+            if (mounted) CustomSnackbar.show(context, SnackBar(content: Text('Gagal: ${res["message"]}')));
+            return;
+          }
         }
+        
+        // Refresh daftar mesin
+        _initStream();
         
         // Tampilkan notifikasi sukses
         if (mounted) {
@@ -441,16 +512,24 @@ class _MachinePageState extends State<MachinePage> {
           ),
           TextButton(
             onPressed: () async {
-              await FirebaseFirestore.instance.collection('machines').doc(machineId).delete();
-              await ActivityService.logActivity(
-                storeId: widget.selectedStoreId,
-                action: "Menghapus mesin ($machineName)",
-              );
-              if (mounted) {
-                Navigator.pop(context);
-                CustomSnackbar.show(context, 
-                  SnackBar(content: Text("Mesin '$machineName' berhasil dihapus!")),
+              final success = await ApiService().deleteMachine(machineId);
+              if (success) {
+                await ActivityService.logActivity(
+                  storeId: widget.selectedStoreId,
+                  action: "Menghapus mesin ($machineName)",
                 );
+                _initStream(); // Refresh daftar mesin
+                if (mounted) {
+                  Navigator.pop(context);
+                  CustomSnackbar.show(context, 
+                    SnackBar(content: Text("Mesin '$machineName' berhasil dihapus!")),
+                  );
+                }
+              } else {
+                if (mounted) {
+                  Navigator.pop(context);
+                  CustomSnackbar.show(context, const SnackBar(content: Text("Gagal menghapus mesin.")));
+                }
               }
             },
             child: const Text("Hapus", style: TextStyle(color: Colors.red)),
@@ -497,13 +576,12 @@ class _MachinePageState extends State<MachinePage> {
                         ),
                       ),
                       const SizedBox(height: 4),
-                      StreamBuilder<QuerySnapshot>(
-                        stream: _machinesStream,
+                      StreamBuilder<List<Map<String, dynamic>>>(
+                        stream: _machinesController?.stream,
                         builder: (context, snapshot) {
                           if (!snapshot.hasData) return const SizedBox.shrink();
                           int offlineCount = 0;
-                          for (var doc in snapshot.data!.docs) {
-                            final m = doc.data() as Map<String, dynamic>;
+                          for (var m in snapshot.data!) {
                             if (m['status'] == 'Offline') offlineCount++;
                           }
                           
@@ -590,23 +668,22 @@ class _MachinePageState extends State<MachinePage> {
             Expanded(
               child: widget.selectedStoreId == null
                   ? const Center(child: Text("Pilih toko di Dashboard terlebih dahulu."))
-                  : StreamBuilder<QuerySnapshot>(
-                      stream: _machinesStream,
+                  : StreamBuilder<List<Map<String, dynamic>>>(
+                      stream: _machinesController?.stream,
                       builder: (context, snapshot) {
                         if (snapshot.connectionState == ConnectionState.waiting) {
                           return const Center(child: CircularProgressIndicator());
                         }
-                        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                        if (!snapshot.hasData || snapshot.data!.isEmpty) {
                           return const Center(child: Text("Tidak ada mesin."));
                         }
 
-                        final allMachines = snapshot.data!.docs;
+                        final allMachines = snapshot.data!;
                         int washerCount = 0;
                         int dryerCount = 0;
                         
-                        List<QueryDocumentSnapshot> filteredList = [];
-                        for (var doc in allMachines) {
-                          final data = doc.data() as Map<String, dynamic>;
+                        List<Map<String, dynamic>> filteredList = [];
+                        for (var data in allMachines) {
                           final type = data['type']?.toString() ?? 'Washer';
                           final name = data['name']?.toString() ?? '';
                           
@@ -621,7 +698,7 @@ class _MachinePageState extends State<MachinePage> {
                             continue;
                           }
 
-                          filteredList.add(doc);
+                          filteredList.add(data);
                         }
 
                         // Filter Chips
@@ -655,7 +732,7 @@ class _MachinePageState extends State<MachinePage> {
                                           padding: const EdgeInsets.only(bottom: 12),
                                           child: Text("MESIN CUCI", style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.grey[400] : const Color(0xFF475569), fontSize: 13, letterSpacing: 1.0)),
                                         ),
-                                      _buildGrid(filteredList.where((d) => (d.data() as Map<String,dynamic>)['type'] == 'Washer').toList()),
+                                      _buildGrid(filteredList.where((d) => d['type'] == 'Washer').toList()),
                                       const SizedBox(height: 24),
                                     ],
                                     if (_selectedFilter == 'Semua' || _selectedFilter == 'Dryer') ...[
@@ -664,7 +741,7 @@ class _MachinePageState extends State<MachinePage> {
                                           padding: const EdgeInsets.only(bottom: 12),
                                           child: Text("MESIN PENGERING", style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.grey[400] : const Color(0xFF475569), fontSize: 13, letterSpacing: 1.0)),
                                         ),
-                                      _buildGrid(filteredList.where((d) => (d.data() as Map<String,dynamic>)['type'] == 'Dryer').toList()),
+                                      _buildGrid(filteredList.where((d) => d['type'] == 'Dryer').toList()),
                                       const SizedBox(height: 24),
                                     ],
                                   ],
@@ -716,7 +793,7 @@ class _MachinePageState extends State<MachinePage> {
     );
   }
 
-  Widget _buildGrid(List<QueryDocumentSnapshot> docs) {
+  Widget _buildGrid(List<Map<String, dynamic>> docs) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     if (docs.isEmpty) {
       return const Padding(
@@ -735,8 +812,7 @@ class _MachinePageState extends State<MachinePage> {
       ),
       itemCount: docs.length,
       itemBuilder: (context, index) {
-        final doc = docs[index];
-        final machine = doc.data() as Map<String, dynamic>;
+        final machine = docs[index];
         final name = machine['name']?.toString() ?? 'Machine';
         final status = machine['status']?.toString() ?? 'Idle';
         
@@ -818,7 +894,14 @@ class _MachinePageState extends State<MachinePage> {
                                       if (machine['type'] == 'Dryer' && machine['dryer_remaining_minutes'] != null && (machine['dryer_remaining_minutes'] as int) > 0) {
                                         timeStr = "${machine['dryer_remaining_minutes']} Menit Tersisa";
                                       } else if (machine['timer_enabled'] == true && machine['start_time'] != null && machine['duration_minutes'] != null) {
-                                        final start = (machine['start_time'] as Timestamp).toDate();
+                                        DateTime start;
+                                        if (machine['start_time'] is int) {
+                                          start = DateTime.fromMillisecondsSinceEpoch(machine['start_time']);
+                                        } else if (machine['start_time'] is Timestamp) {
+                                          start = (machine['start_time'] as Timestamp).toDate();
+                                        } else {
+                                          start = DateTime.parse(machine['start_time'].toString());
+                                        }
                                         final duration = machine['duration_minutes'] as int;
                                         final end = start.add(Duration(minutes: duration));
                                         final diff = end.difference(DateTime.now());
@@ -832,7 +915,14 @@ class _MachinePageState extends State<MachinePage> {
                                         }
                                       } else {
                                         if (machine['start_time'] != null) {
-                                          final start = (machine['start_time'] as Timestamp).toDate();
+                                          DateTime start;
+                                          if (machine['start_time'] is int) {
+                                            start = DateTime.fromMillisecondsSinceEpoch(machine['start_time']);
+                                          } else if (machine['start_time'] is Timestamp) {
+                                            start = (machine['start_time'] as Timestamp).toDate();
+                                          } else {
+                                            start = DateTime.parse(machine['start_time'].toString());
+                                          }
                                           final diff = DateTime.now().difference(start);
                                           final h = diff.inHours.toString().padLeft(2, '0');
                                           final m = diff.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -843,6 +933,8 @@ class _MachinePageState extends State<MachinePage> {
                                       double rawAmpere = 0.0;
                                       if (machine['current_ampere'] != null) {
                                         rawAmpere = (machine['current_ampere'] as num).toDouble();
+                                      } else if (machine['current'] != null) {
+                                        rawAmpere = (machine['current'] as num).toDouble();
                                       }
                                       
                                       // Gunakan arus rata-rata konstan jika sensor ESP32 membaca 0
@@ -851,7 +943,14 @@ class _MachinePageState extends State<MachinePage> {
                                       final watt = displayAmpere * 220; // Asumsi 220V
                                       double kwh = 0.0;
                                       if (machine['start_time'] != null) {
-                                        final start = (machine['start_time'] as Timestamp).toDate();
+                                        DateTime start;
+                                        if (machine['start_time'] is int) {
+                                          start = DateTime.fromMillisecondsSinceEpoch(machine['start_time']);
+                                        } else if (machine['start_time'] is Timestamp) {
+                                          start = (machine['start_time'] as Timestamp).toDate();
+                                        } else {
+                                          start = DateTime.parse(machine['start_time'].toString());
+                                        }
                                         final elapsedHours = DateTime.now().difference(start).inSeconds / 3600.0;
                                         kwh = (watt / 1000.0) * elapsedHours;
                                       }
@@ -884,7 +983,7 @@ class _MachinePageState extends State<MachinePage> {
                       height: 32,
                       child: status == 'Idle' 
                           ? OutlinedButton(
-                              onPressed: () => _showPlayMachineDialog(doc.id, machine),
+                              onPressed: () => _showPlayMachineDialog(machine['id'].toString(), machine),
                               style: OutlinedButton.styleFrom(
                                 side: const BorderSide(color: Color(0xFF2563EB)),
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -894,7 +993,7 @@ class _MachinePageState extends State<MachinePage> {
                             )
                           : (status == 'Active'
                               ? ElevatedButton(
-                                  onPressed: () => _stopMachine(doc.id, name),
+                                  onPressed: () => _stopMachine(machine['id'].toString(), name),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: const Color(0xFFEF4444),
                                     elevation: 0,
@@ -927,11 +1026,11 @@ class _MachinePageState extends State<MachinePage> {
                     icon: const Icon(Icons.more_vert, size: 16, color: Color(0xFF94A3B8)),
                     onSelected: (value) {
                       if (value == 'edit') {
-                        _showAddMachineDialog(machineId: doc.id, initialData: machine);
+                        _showAddMachineDialog(machineId: machine['id'].toString(), initialData: machine);
                       } else if (value == 'diagnostics') {
-                        _showDiagnosticsDialog(doc.id, machine);
+                        _showDiagnosticsDialog(machine['id'].toString(), machine);
                       } else if (value == 'delete') {
-                        _confirmDeleteMachine(doc.id, name);
+                        _confirmDeleteMachine(machine['id'].toString(), name);
                       }
                     },
                     itemBuilder: (context) => [
@@ -974,7 +1073,8 @@ class _AddMachineFormState extends State<AddMachineForm> {
       _machineName = widget.initialData!['name'];
       _machineType = widget.initialData!['type'] ?? 'Washer';
       _deviceId = widget.initialData!['device_id'] ?? 'esp32_001';
-      _relayChannel = widget.initialData!['relay_channel'] ?? 1;
+      final rc = widget.initialData!['relay_channel'];
+      _relayChannel = rc is int ? rc : (int.tryParse(rc?.toString() ?? '1') ?? 1);
     }
   }
 
@@ -1306,7 +1406,7 @@ class _SensorDiagnosticsDialogState extends State<SensorDiagnosticsDialog> {
 
     try {
       final response = await http.post(
-        Uri.parse('http://103.150.226.111:3000/api/esp32/calibrate'),
+        Uri.parse('http://103.150.226.111/node/api/esp32/calibrate'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'machine_id': widget.machineId,
@@ -1347,7 +1447,7 @@ class _SensorDiagnosticsDialogState extends State<SensorDiagnosticsDialog> {
         final zeroOffset = data['zero_offset'] ?? '-';
         final rmsV = data['rms_voltage'] ?? '-';
         final calFactor = data['calibration_factor'] ?? '-';
-        final current = data['current_ampere'] ?? '-';
+        final current = data['current_ampere'] ?? data['current'] ?? '-';
         final wifiSsid = data['wifi_ssid'] ?? 'Tidak diketahui';
         final wifiRssi = data['wifi_rssi'] ?? '-';
 
@@ -1419,7 +1519,7 @@ class _SensorDiagnosticsDialogState extends State<SensorDiagnosticsDialog> {
 }
 
 class EnergyDashboard extends StatefulWidget {
-  final List<QueryDocumentSnapshot> machines;
+  final List<Map<String, dynamic>> machines;
   
   const EnergyDashboard({super.key, required this.machines});
 
@@ -1436,10 +1536,10 @@ class _EnergyDashboardState extends State<EnergyDashboard> {
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final sortedMachines = List<QueryDocumentSnapshot>.from(widget.machines);
+    final sortedMachines = List<Map<String, dynamic>>.from(widget.machines);
     sortedMachines.sort((a, b) {
-      final aData = a.data() as Map<String, dynamic>;
-      final bData = b.data() as Map<String, dynamic>;
+      final aData = a;
+      final bData = b;
       final aActive = (aData['status'] == 'Active') ? 1 : 0;
       final bActive = (bData['status'] == 'Active') ? 1 : 0;
       if (aActive != bActive) return bActive.compareTo(aActive);
@@ -1493,9 +1593,8 @@ class _EnergyDashboardState extends State<EnergyDashboard> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: sortedMachines.length,
             itemBuilder: (context, index) {
-              final doc = sortedMachines[index];
-              final machine = doc.data() as Map<String, dynamic>;
-              return _EnergyCard(machineId: doc.id, machine: machine, selectedPeriod: _selectedPeriod);
+              final machine = sortedMachines[index];
+              return _EnergyCard(machineId: machine['id'].toString(), machine: machine, selectedPeriod: _selectedPeriod);
             },
           ),
         ),
@@ -1517,7 +1616,7 @@ class _EnergyCard extends StatelessWidget {
     final name = machine['name'] ?? 'Mesin';
     final type = machine['type'] ?? 'Washer';
     final status = machine['status'] ?? 'Idle';
-    final currentAmpere = double.tryParse(machine['current_ampere']?.toString() ?? '0') ?? 0.0;
+    final currentAmpere = double.tryParse(machine['current_ampere']?.toString() ?? machine['current']?.toString() ?? '0') ?? 0.0;
     
     final isActive = status == 'Active';
     final accentColor = type == 'Washer' ? Colors.blueAccent : Colors.orangeAccent;

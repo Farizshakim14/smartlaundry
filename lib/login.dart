@@ -8,6 +8,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'forgot_password.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'services/api_service.dart';
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -73,6 +74,23 @@ class _LoginPageState extends State<LoginPage> {
           }
           return;
         }
+
+        // Dapatkan token dari Laravel API
+        final apiResult = await ApiService().loginWithGoogle(userEmail);
+        
+        if (!apiResult['success']) {
+          await FirebaseAuth.instance.signOut();
+          if (mounted) {
+            Navigator.pop(context);
+            CustomSnackbar.show(context, 
+              SnackBar(
+                content: Text(apiResult['message'] ?? "Gagal mendapatkan akses token dari server."),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return;
+        }
       }
 
       if (mounted) {
@@ -113,48 +131,37 @@ class _LoginPageState extends State<LoginPage> {
         builder: (context) => const Center(child: CircularProgressIndicator()),
       );
 
-      final querySnapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .where('email', isEqualTo: email)
-          .get();
+      final result = await ApiService().login(email, password);
 
-      if (querySnapshot.docs.isEmpty) {
-        if (mounted) {
-          Navigator.pop(context);
+      if (mounted) {
+        Navigator.pop(context); // close loading dialog
+        
+        if (result['success']) {
+          // Sinkronisasi dengan Firebase Auth (Login atau Buat Akun)
+          try {
+            await FirebaseAuth.instance.signInWithEmailAndPassword(email: email, password: password);
+          } catch (e) {
+            try {
+              await FirebaseAuth.instance.createUserWithEmailAndPassword(email: email, password: password);
+            } catch (createError) {
+              debugPrint("Gagal sinkronisasi Firebase Auth: $createError");
+            }
+          }
+
+          if (mounted) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (context) => const DashboardPage()),
+            );
+          }
+        } else {
           CustomSnackbar.show(context, 
-            const SnackBar(
-              content: Text("Akses Ditolak: Akun Anda belum didaftarkan oleh Admin."),
+            SnackBar(
+              content: Text(result['message'] ?? "Login gagal."),
               backgroundColor: Colors.red,
             ),
           );
         }
-        return;
-      }
-
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
-
-      if (mounted) {
-        Navigator.pop(context);
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const DashboardPage()),
-        );
-      }
-    } on FirebaseAuthException catch (e) {
-      if (mounted) {
-        Navigator.pop(context);
-        String message = "Login gagal. Periksa kembali email dan password Anda.";
-        if (e.code == 'user-not-found') {
-          message = "Pengguna tidak ditemukan.";
-        } else if (e.code == 'wrong-password') {
-          message = "Password salah.";
-        }
-        CustomSnackbar.show(context, 
-          SnackBar(content: Text(message), backgroundColor: Colors.red),
-        );
       }
     } catch (e) {
       if (mounted) {

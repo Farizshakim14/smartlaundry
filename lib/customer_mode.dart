@@ -190,7 +190,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
 
     // 3. Panggil API Midtrans
     try {
-      const String serverUrl = 'http://103.150.226.111:3000/pay-service';
+      const String serverUrl = 'http://103.150.226.111/node/pay-service';
       final response = await http.post(
         Uri.parse(serverUrl),
         headers: {'Content-Type': 'application/json'},
@@ -255,7 +255,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
                     child: Image.network(
-                      'http://103.150.226.111:3000/proxy-qr?url=${Uri.encodeComponent(qrUrl)}', 
+                      'http://103.150.226.111/node/proxy-qr?url=${Uri.encodeComponent(qrUrl)}', 
                       fit: BoxFit.contain,
                       errorBuilder: (context, error, stackTrace) {
                         return const Center(child: Text("Gagal memuat QR Code", textAlign: TextAlign.center));

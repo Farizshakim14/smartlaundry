@@ -25,7 +25,7 @@
 const char* server_ip = "103.150.226.111";
 const char* ssid = "Laundry Coin";
 const char* password = "2025*12*20";
-const int server_port = 3000;
+const int server_port = 80;
 const char* device_id = "esp32_001";
 const char* API_PREFIX = "/api/esp32";
 

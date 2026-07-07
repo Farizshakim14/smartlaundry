@@ -19,6 +19,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import 'package:aplikasilaundry/home_tab.dart';
 import 'package:aplikasilaundry/push_notification_service.dart';
+import 'package:aplikasilaundry/services/api_service.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -31,6 +32,7 @@ class _DashboardPageState extends State<DashboardPage> {
   int _selectedIndex = 0;
   String? _userRole;
   String? _userName;
+  String? _userEmail;
   String? _selectedStoreId;
   List<Map<String, dynamic>> _myStores = [];
   bool _isLoading = true;
@@ -70,15 +72,21 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _setupUserAndStoreListeners() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
+    final profileResponse = await ApiService().getProfile();
+    if (profileResponse['success'] && profileResponse['user'] != null) {
+      _userEmail = profileResponse['user']['email'];
+    } else {
+      _userEmail = FirebaseAuth.instance.currentUser?.email;
+    }
+
+    if (_userEmail == null) {
       if (mounted) setState(() => _isLoading = false);
       return;
     }
 
     // Update Session ID saat dashboard pertama kali dibuka secara sinkron agar listener tidak mendeteksi id lama
     try {
-      final snap = await FirebaseFirestore.instance.collection('users').where('email', isEqualTo: user.email).limit(1).get();
+      final snap = await FirebaseFirestore.instance.collection('users').where('email', isEqualTo: _userEmail).limit(1).get();
       if (snap.docs.isNotEmpty) {
         await snap.docs.first.reference.update({'session_id': _currentSessionId});
       }
@@ -89,7 +97,7 @@ class _DashboardPageState extends State<DashboardPage> {
     _userSubscription?.cancel();
     _userSubscription = FirebaseFirestore.instance
         .collection('users')
-        .where('email', isEqualTo: user.email)
+        .where('email', isEqualTo: _userEmail)
         .limit(1)
         .snapshots()
         .listen((userDoc) {
@@ -99,6 +107,7 @@ class _DashboardPageState extends State<DashboardPage> {
         // --- LOGIC SINGLE DEVICE LOGIN ---
         if (data['session_id'] != null && data['session_id'] != _currentSessionId) {
           FirebaseAuth.instance.signOut();
+          ApiService().logout();
           if (mounted) {
             showDialog(
               context: context,
@@ -127,7 +136,7 @@ class _DashboardPageState extends State<DashboardPage> {
         bool roleChanged = _userRole != newRole;
         
         // Prioritas role superadmin jika email cocok
-        if (user.email == 'farizshakim.14@gmail.com') {
+        if (_userEmail == 'farizshakim.14@gmail.com') {
           _userRole = 'Superadmin';
         } else {
           _userRole = newRole;
@@ -151,23 +160,28 @@ class _DashboardPageState extends State<DashboardPage> {
         }
       } else {
         // Fallback jika tidak ada dokumen tapi email superadmin
-        if (user.email == 'farizshakim.14@gmail.com') {
+        if (_userEmail == 'farizshakim.14@gmail.com') {
           _userRole = 'Superadmin';
           _setupStoreListener();
         } else {
           if (mounted) setState(() => _isLoading = false);
         }
       }
+    }, onError: (error) {
+      debugPrint("Error listening to users collection: $error");
+      if (mounted) {
+        setState(() => _isLoading = false);
+        CustomSnackbar.show(context, SnackBar(content: Text("Gagal memuat profil: $error"), backgroundColor: Colors.red));
+      }
     });
   }
 
   void _setupStoreListener() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    if (_userEmail == null) return;
 
     Query storesQuery = FirebaseFirestore.instance.collection('stores');
     if (_userRole == 'Owner' || (_userRole != 'Superadmin' && _userRole != 'Admin' && _userRole != 'Cashier')) {
-      storesQuery = storesQuery.where('owner_email', isEqualTo: user.email);
+      storesQuery = storesQuery.where('owner_email', isEqualTo: _userEmail);
     }
 
     _storeSubscription?.cancel();
@@ -194,6 +208,12 @@ class _DashboardPageState extends State<DashboardPage> {
           _isLoading = false;
         });
         _setupNotificationListener(); 
+      }
+    }, onError: (error) {
+      debugPrint("Error listening to stores collection: $error");
+      if (mounted) {
+        setState(() => _isLoading = false);
+        CustomSnackbar.show(context, SnackBar(content: Text("Gagal memuat toko: $error"), backgroundColor: Colors.red));
       }
     });
   }
@@ -276,7 +296,7 @@ class _DashboardPageState extends State<DashboardPage> {
       MachinePage(selectedStoreId: _selectedStoreId, userRole: _userRole ?? 'Unknown'),
       MasterPelangganPage(selectedStoreId: _selectedStoreId),
       StatsPage(selectedStoreId: _selectedStoreId, userRole: _effectiveRole, myStores: _myStores),
-      ProfilePage(selectedStoreId: _selectedStoreId),
+      ProfilePage(selectedStoreId: _selectedStoreId, userEmail: _userEmail),
     ];
 
     return Scaffold(

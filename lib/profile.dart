@@ -15,7 +15,8 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 class ProfilePage extends StatefulWidget {
   final String? selectedStoreId;
-  const ProfilePage({super.key, this.selectedStoreId});
+  final String? userEmail;
+  const ProfilePage({super.key, this.selectedStoreId, this.userEmail});
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
@@ -34,22 +35,22 @@ class _ProfilePageState extends State<ProfilePage> {
 
   @override
   Widget build(BuildContext context) {
-    User? user = FirebaseAuth.instance.currentUser;
+    final String? email = widget.userEmail ?? FirebaseAuth.instance.currentUser?.email;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    if (user == null) return const SizedBox();
+    if (email == null) return const SizedBox();
 
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC), 
       body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('users').where('email', isEqualTo: user.email).limit(1).snapshots(),
+        stream: FirebaseFirestore.instance.collection('users').where('email', isEqualTo: email).limit(1).snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
 
           String currentRole = 'Unknown';
-          String currentName = user.displayName ?? "User";
+          String currentName = FirebaseAuth.instance.currentUser?.displayName ?? "User";
           String? currentStoreId;
           String currentPhone = "-";
 
@@ -61,7 +62,7 @@ class _ProfilePageState extends State<ProfilePage> {
             currentPhone = data['phone']?.toString() ?? "-";
           }
 
-          if (user.email == 'farizshakim.14@gmail.com') {
+          if (email == 'farizshakim.14@gmail.com') {
             currentRole = 'Superadmin';
           }
 
@@ -124,7 +125,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                 border: Border.all(color: Colors.white.withOpacity(0.5), width: 3),
                                 image: DecorationImage(
                                   image: NetworkImage(
-                                    user.photoURL ?? 'https://ui-avatars.com/api/?name=${currentName.replaceAll(" ", "+")}&background=2563EB&color=fff'
+                                    FirebaseAuth.instance.currentUser?.photoURL ?? 'https://ui-avatars.com/api/?name=${currentName.replaceAll(" ", "+")}&background=2563EB&color=fff'
                                   ),
                                   fit: BoxFit.cover,
                                 ),
@@ -143,7 +144,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    user.email ?? "-",
+                                    email,
                                     style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.8)),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
@@ -206,7 +207,7 @@ class _ProfilePageState extends State<ProfilePage> {
                               Text("Informasi Akun", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: isDark ? Colors.white : const Color(0xFF1E293B))),
                               const SizedBox(height: 16),
                               _buildInfoRow("Nama Lengkap", currentName, isDark),
-                              _buildInfoRow("Email", user.email ?? "-", isDark),
+                              _buildInfoRow("Email", email, isDark),
                               _buildInfoRow("No. Handphone", currentPhone, isDark),
                               _buildInfoRow("Role", currentRole, isDark),
                               

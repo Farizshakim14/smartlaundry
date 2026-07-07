@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:aplikasilaundry/services/api_service.dart';
 
 class UserManagementPage extends StatefulWidget {
   final String currentRole;
@@ -80,16 +81,47 @@ class _UserManagementPageState extends State<UserManagementPage> {
       ),
     ).then((newUser) async {
       if (newUser != null) {
-        await FirebaseFirestore.instance.collection('users').add(newUser);
-        
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const Center(child: CircularProgressIndicator()),
+        );
+
+        final apiResult = await ApiService().registerUser({
+          "name": newUser["name"],
+          "email": newUser["email"],
+          "password": newUser["password"],
+          "role": newUser["role"],
+        });
+
         if (mounted) {
-          CustomSnackbar.show(context, 
-            SnackBar(
-              content: Text('${newUser["name"]} berhasil ditambahkan sebagai ${newUser["role"]}!'),
-              backgroundColor: const Color(0xFF10B981),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
+          Navigator.pop(context); // Tutup loading
+        }
+
+        if (apiResult['success']) {
+          // Hapus password sebelum simpan ke Firestore
+          final firestoreData = Map<String, dynamic>.from(newUser)..remove('password');
+          await FirebaseFirestore.instance.collection('users').add(firestoreData);
+          
+          if (mounted) {
+            CustomSnackbar.show(context, 
+              SnackBar(
+                content: Text('${newUser["name"]} berhasil ditambahkan sebagai ${newUser["role"]}!'),
+                backgroundColor: const Color(0xFF10B981),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        } else {
+          if (mounted) {
+            CustomSnackbar.show(context, 
+              SnackBar(
+                content: Text(apiResult['message'] ?? 'Gagal membuat pengguna di server.'),
+                backgroundColor: Colors.red,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
         }
       }
     });
@@ -98,39 +130,35 @@ class _UserManagementPageState extends State<UserManagementPage> {
   void _confirmDeleteUser(String docId, String name, String email, String role) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text("Hapus Pengguna"),
         content: Text("Apakah Anda yakin ingin menghapus akun $name?\nTindakan ini tidak dapat dibatalkan" + 
           (role == 'Owner' ? "\n\n⚠️ PERINGATAN: Menghapus Owner akan ikut menghapus SEMUA TOKO, mesin, kasir, pelanggan, dan riwayat transaksinya!" : ".")),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text("Batal", style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () async {
-              Navigator.pop(context); // Tutup dialog confirmation
+              Navigator.pop(dialogContext); // Tutup dialog confirmation
               
               // Tampilkan loading dialog
               showDialog(
                 context: context,
                 barrierDismissible: false,
-                builder: (context) => const Center(child: CircularProgressIndicator()),
+                builder: (loadingContext) => const Center(child: CircularProgressIndicator()),
               );
 
               try {
-                // 1. Hapus akun dari Firebase Auth lewat API Backend (VPS)
+                // 1. Hapus akun dari API Backend Laravel
                 try {
-                  final response = await http.post(
-                    Uri.parse('http://103.150.226.111:3000/delete-user'),
-                    headers: {'Content-Type': 'application/json'},
-                    body: jsonEncode({'email': email}),
-                  ).timeout(const Duration(seconds: 5));
-                  print("Auth deletion response: ${response.body}");
+                  final apiResult = await ApiService().deleteUser(email);
+                  print("Backend deletion response: ${apiResult}");
                 } catch (e) {
-                  print("Warning: Gagal menghapus Auth: $e");
+                  print("Warning: Gagal menghapus user di Backend: $e");
                 }
 
                 // 2. Cascade Delete jika Owner
@@ -418,6 +446,7 @@ class _AddUserFormState extends State<AddUserForm> {
   final _formKey = GlobalKey<FormState>();
   String _name = "";
   String _email = "";
+  String _password = "";
   String? _selectedRole;
   String? _selectedStoreId;
 
@@ -512,6 +541,29 @@ class _AddUserFormState extends State<AddUserForm> {
               ),
               const SizedBox(height: 16),
 
+              // Input Password
+              const Text(
+                "Password",
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF1E293B)),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                obscureText: true,
+                decoration: InputDecoration(
+                  hintText: "Enter password (min 8 chars)",
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                ),
+                validator: (value) => value == null || value.length < 8 ? "Password minimum 8 characters" : null,
+                onSaved: (value) => _password = value!,
+              ),
+              const SizedBox(height: 16),
+
               // Dropdown Role
               const Text(
                 "Assign Role",
@@ -594,6 +646,7 @@ class _AddUserFormState extends State<AddUserForm> {
                       Navigator.pop(context, {
                         "name": _name,
                         "email": _email,
+                        "password": _password,
                         "role": _selectedRole!,
                         if (_selectedRole == 'Cashier' && _selectedStoreId != null) "store_id": _selectedStoreId,
                       });

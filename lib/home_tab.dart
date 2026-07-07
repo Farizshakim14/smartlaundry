@@ -10,6 +10,9 @@ import 'package:aplikasilaundry/store_management.dart';
 import 'package:aplikasilaundry/customer_mode.dart';
 import 'package:aplikasilaundry/live_machine_item.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
+import 'package:firebase_database/firebase_database.dart' hide Query;
+import 'package:aplikasilaundry/services/api_service.dart';
 class HomeTab extends StatefulWidget {
   final String? userName;
   final String userRole;
@@ -39,7 +42,8 @@ class _HomeTabState extends State<HomeTab> {
 
   Stream<QuerySnapshot>? _tokenBatchesStream;
   Stream<QuerySnapshot>? _transactionsStream;
-  Stream<QuerySnapshot>? _machinesStream;
+  StreamController<List<Map<String, dynamic>>>? _machinesController;
+  StreamSubscription? _rtdbSubscription;
   Stream<QuerySnapshot>? _activitiesStream;
 
   @override
@@ -47,6 +51,13 @@ class _HomeTabState extends State<HomeTab> {
     super.initState();
     _initStreams();
     _loadLastViewedActivities();
+  }
+
+  @override
+  void dispose() {
+    _rtdbSubscription?.cancel();
+    _machinesController?.close();
+    super.dispose();
   }
 
   Future<void> _loadLastViewedActivities() async {
@@ -97,15 +108,70 @@ class _HomeTabState extends State<HomeTab> {
     _transactionsStream = txQuery.snapshots();
 
     // 3. Machines Stream
-    Query machineQuery = FirebaseFirestore.instance.collection('machines');
-    if (widget.selectedStoreId != null && widget.selectedStoreId != 'ALL') {
-      machineQuery = machineQuery.where('store_id', isEqualTo: widget.selectedStoreId);
+    _rtdbSubscription?.cancel();
+    if (widget.selectedStoreId != null) {
+      if (_machinesController == null || _machinesController!.isClosed) {
+        _machinesController = StreamController<List<Map<String, dynamic>>>.broadcast();
+        setState(() {});
+      }
+      _fetchAndListenMachines();
+    } else {
+      _machinesController?.close();
+      _machinesController = null;
+      setState(() {});
     }
-    _machinesStream = machineQuery.snapshots();
 
     // 4. Activities Stream
     Query actQuery = FirebaseFirestore.instance.collection('activities');
     _activitiesStream = actQuery.orderBy('timestamp', descending: true).limit(30).snapshots();
+  }
+
+  void _fetchAndListenMachines() async {
+    String? storeIdForApi = (widget.selectedStoreId == 'ALL') ? null : widget.selectedStoreId;
+    
+    // 1. Fetch from Laravel
+    List<Map<String, dynamic>> mysqlMachines = await ApiService().getMachines(storeId: storeIdForApi);
+
+    if (mysqlMachines.isEmpty) {
+      if (_machinesController != null && !_machinesController!.isClosed) {
+        _machinesController?.add([]);
+      }
+    } else {
+      if (_machinesController != null && !_machinesController!.isClosed) {
+        _machinesController?.add(List.from(mysqlMachines));
+      }
+    }
+
+    // 2. Listen to RTDB
+    _rtdbSubscription = FirebaseDatabase.instance.ref('machines').onValue.listen((event) {
+      if (event.snapshot.value != null && mysqlMachines.isNotEmpty) {
+        final rtdbData = Map<String, dynamic>.from(event.snapshot.value as Map);
+        
+        for (var i = 0; i < mysqlMachines.length; i++) {
+          final mId = mysqlMachines[i]['id'].toString();
+          final rtdbKey = 'Mesin$mId';
+          if (rtdbData.containsKey(rtdbKey)) {
+            final statusData = Map<String, dynamic>.from(rtdbData[rtdbKey] as Map);
+            mysqlMachines[i]['status'] = statusData['status'] ?? mysqlMachines[i]['status'];
+            mysqlMachines[i]['relay_status'] = statusData['relay_status'] ?? mysqlMachines[i]['relay_status'];
+            mysqlMachines[i]['timer_enabled'] = statusData['timer_enabled'];
+            mysqlMachines[i]['duration_minutes'] = statusData['duration_minutes'];
+            mysqlMachines[i]['start_time'] = statusData['start_time'];
+            if (statusData.containsKey('current_ampere')) {
+              mysqlMachines[i]['current_ampere'] = statusData['current_ampere'];
+            } else if (statusData.containsKey('current')) {
+              mysqlMachines[i]['current_ampere'] = statusData['current'];
+            }
+            if (statusData.containsKey('dryer_remaining_minutes')) {
+              mysqlMachines[i]['dryer_remaining_minutes'] = statusData['dryer_remaining_minutes'];
+            }
+          }
+        }
+        if (_machinesController != null && !_machinesController!.isClosed) {
+            _machinesController?.add(List.from(mysqlMachines));
+        }
+      }
+    });
   }
 
   @override
@@ -465,7 +531,8 @@ class _HomeTabState extends State<HomeTab> {
               if (!myStoreIds.contains(data['store_id'])) continue;
             }
 
-            final amount = (data['amount'] ?? 0).toDouble();
+            final amountRaw = data['amount'] ?? 0;
+            final amount = double.tryParse(amountRaw.toString()) ?? 0.0;
             final timestamp = (data['timestamp'] as Timestamp?)?.toDate();
             if (timestamp != null) {
               DateTime startOfToday = DateTime(now.year, now.month, now.day);
@@ -523,7 +590,7 @@ class _HomeTabState extends State<HomeTab> {
         double maxY = 6;
         
         if (activePeriod == 'Hari Ini') {
-          spots = const [FlSpot(0, 1), FlSpot(1, 2), FlSpot(2, 1.5), FlSpot(3, 3), FlSpot(4, 2.5), FlSpot(5, 4), FlSpot(6, 5)];
+          spots = const [FlSpot(0.0, 1.0), FlSpot(1.0, 2.0), FlSpot(2.0, 1.5), FlSpot(3.0, 3.0), FlSpot(4.0, 2.5), FlSpot(5.0, 4.0), FlSpot(6.0, 5.0)];
           maxX = 6;
           maxY = 6;
         } else if (activePeriod == 'Bulan Ini') {
@@ -664,8 +731,8 @@ class _HomeTabState extends State<HomeTab> {
   Widget _buildStatusMesin(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     
-    return StreamBuilder<QuerySnapshot>(
-      stream: _machinesStream,
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: _machinesController?.stream,
       builder: (context, snapshot) {
         int washerActive = 0;
         int washerIdle = 0;
@@ -673,8 +740,7 @@ class _HomeTabState extends State<HomeTab> {
         int dryerIdle = 0;
 
         if (snapshot.hasData) {
-          for (var doc in snapshot.data!.docs) {
-            final data = doc.data() as Map<String, dynamic>;
+          for (var data in snapshot.data!) {
             final type = data['type']?.toString() ?? 'Washer';
             final status = data['status']?.toString() ?? 'Idle';
             
@@ -715,20 +781,19 @@ class _HomeTabState extends State<HomeTab> {
   }
 
   Widget _buildMachineList() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: _machinesStream,
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: _machinesController?.stream,
       builder: (context, snapshot) {
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+        if (!snapshot.hasData || snapshot.data!.isEmpty) {
           return const SizedBox.shrink();
         }
 
-        final docs = snapshot.data!.docs;
+        final machines = snapshot.data!;
         
         return Column(
           children: [
             const SizedBox(height: 16),
-            ...docs.map((doc) {
-              final data = doc.data() as Map<String, dynamic>;
+            ...machines.map((data) {
               return Padding(
                 padding: const EdgeInsets.only(bottom: 16),
                 child: LiveMachineItem(data: data),

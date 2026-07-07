@@ -1,6 +1,7 @@
 import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:aplikasilaundry/services/api_service.dart';
 
 class StatsPage extends StatefulWidget {
   final String? selectedStoreId;
@@ -20,6 +21,10 @@ class StatsPage extends StatefulWidget {
 
 class _StatsPageState extends State<StatsPage> {
   String? _selectedFilterStoreId; // null = Semua Cabang
+  bool _isLoading = true;
+  List<Map<String, dynamic>> _allTransactions = [];
+  int _totalIncome = 0;
+  int _totalExpense = 0;
 
   @override
   void initState() {
@@ -28,6 +33,7 @@ class _StatsPageState extends State<StatsPage> {
     if (widget.userRole == 'Cashier') {
       _selectedFilterStoreId = widget.selectedStoreId;
     }
+    _fetchData();
   }
 
   @override
@@ -35,6 +41,7 @@ class _StatsPageState extends State<StatsPage> {
     super.didUpdateWidget(oldWidget);
     if (widget.userRole == 'Cashier' && oldWidget.selectedStoreId != widget.selectedStoreId) {
       _selectedFilterStoreId = widget.selectedStoreId;
+      _fetchData();
     }
   }
 
@@ -67,30 +74,114 @@ class _StatsPageState extends State<StatsPage> {
     return "${date.day} ${months[date.month - 1]} ${date.year}, $h:$m";
   }
 
-  Stream<QuerySnapshot> _getStream(String collection) {
-    var ref = FirebaseFirestore.instance.collection(collection);
-    
-    if (_selectedFilterStoreId != null) {
-      if (collection == 'token_requests') {
-        return ref.where('store_id', isEqualTo: _selectedFilterStoreId).where('status', isEqualTo: 'Approved').snapshots();
-      }
-      return ref.where('store_id', isEqualTo: _selectedFilterStoreId).snapshots();
-    } else {
-      // Semua Cabang
+  Future<void> _fetchData() async {
+    setState(() => _isLoading = true);
+
+    List<Map<String, dynamic>> tempTransactions = [];
+    int tempIncome = 0;
+    int tempExpense = 0;
+
+    String? storeIdParam = _selectedFilterStoreId;
+    if (storeIdParam == null && widget.userRole == 'Owner') {
       List<String> myStoreIds = widget.myStores.map((s) => s['id'] as String).toList();
-      if (myStoreIds.isEmpty) {
-        return ref.where('store_id', isEqualTo: 'TIDAK_ADA').snapshots();
+      if (myStoreIds.isNotEmpty) {
+        storeIdParam = myStoreIds.join(',');
+      } else {
+        storeIdParam = 'TIDAK_ADA';
       }
+    }
+
+    final machineTxs = await ApiService().getTransactions(storeId: storeIdParam);
+    for (var tx in machineTxs) {
+      final int amount = (tx['cost'] ?? 0) as int;
+      tempIncome += amount;
+      DateTime? date = tx['created_at'] != null ? DateTime.tryParse(tx['created_at'].toString()) : null;
+      String mName = (tx['machine'] != null && tx['machine']['name'] != null) ? tx['machine']['name'] : 'Mesin';
       
-      // Firebase IN max 10
-      if (myStoreIds.length > 10) {
-        myStoreIds = myStoreIds.sublist(0, 10);
-      }
+      tempTransactions.add({
+        'title': "Pemakaian - $mName",
+        'date': date,
+        'amountStr': "+ Rp ${_formatRupiahPositive(amount)}",
+        'rawAmount': amount,
+        'isIncome': true,
+        'isManual': false,
+        'timestamp': date,
+      });
+    }
+
+    final manualTxs = await ApiService().getManualTransactions(storeId: storeIdParam);
+    for (var tx in manualTxs) {
+      final int amount = (tx['amount'] ?? 0) as int;
+      final bool isIncome = tx['type'] == 'income';
+      if (isIncome) tempIncome += amount; else tempExpense += amount;
+      DateTime? date = tx['timestamp'] != null ? DateTime.tryParse(tx['timestamp'].toString()) : null;
       
-      if (collection == 'token_requests') {
-        return ref.where('store_id', whereIn: myStoreIds).where('status', isEqualTo: 'Approved').snapshots();
+      tempTransactions.add({
+        'docId': tx['id'].toString(),
+        'title': tx['title'] ?? (isIncome ? 'Pemasukan Manual' : 'Pengeluaran Manual'),
+        'date': date,
+        'amountStr': "${isIncome ? '+' : '-'} Rp ${_formatRupiahPositive(amount)}",
+        'rawAmount': amount,
+        'isIncome': isIncome,
+        'isManual': true,
+        'timestamp': date,
+      });
+    }
+
+    try {
+      Query q = FirebaseFirestore.instance.collection('token_requests').where('status', isEqualTo: 'Approved');
+      if (_selectedFilterStoreId != null) {
+        q = q.where('store_id', isEqualTo: _selectedFilterStoreId);
+      } else {
+        List<String> myStoreIds = widget.myStores.map((s) => s['id'] as String).toList();
+        if (myStoreIds.isEmpty) q = q.where('store_id', isEqualTo: 'TIDAK_ADA');
+        else {
+          if (myStoreIds.length > 10) myStoreIds = myStoreIds.sublist(0, 10);
+          q = q.where('store_id', whereIn: myStoreIds);
+        }
       }
-      return ref.where('store_id', whereIn: myStoreIds).snapshots();
+      final tokenSnap = await q.get();
+      for (var doc in tokenSnap.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final int price = data['price'] ?? 0;
+        
+        bool isSuperadmin = widget.userRole == 'Superadmin';
+        
+        if (isSuperadmin) {
+          tempIncome += price;
+        } else {
+          tempExpense += price;
+        }
+        
+        DateTime? date = data['created_at'] != null ? (data['created_at'] as Timestamp).toDate() : null;
+        tempTransactions.add({
+          'title': isSuperadmin ? "Jual Token - ${data['package_name'] ?? 'Paket'}" : "Beli Token - ${data['package_name'] ?? 'Paket'}",
+          'date': date,
+          'amountStr': "${isSuperadmin ? '+' : '-'} Rp ${_formatRupiahPositive(price)}",
+          'rawAmount': price,
+          'isIncome': isSuperadmin,
+          'isManual': false,
+          'timestamp': date,
+        });
+      }
+    } catch (e) {}
+
+    tempTransactions.sort((a, b) {
+      final timeA = a['timestamp'] as DateTime?;
+      final timeB = b['timestamp'] as DateTime?;
+      if (timeA == null && timeB == null) return 0;
+      if (timeA == null) return 1;
+      if (timeB == null) return -1;
+      return timeB.compareTo(timeA);
+    });
+
+    if (mounted) {
+      setState(() {
+        _allTransactions = tempTransactions;
+        _totalIncome = tempIncome;
+        _totalExpense = tempExpense;
+        _isLoading = false;
+      });
     }
   }
 
@@ -166,6 +257,7 @@ class _StatsPageState extends State<StatsPage> {
                                   setState(() {
                                     _selectedFilterStoreId = val;
                                   });
+                                  _fetchData();
                                 },
                               ),
                             ),
@@ -191,160 +283,46 @@ class _StatsPageState extends State<StatsPage> {
             ),
           ),
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: _getStream('transactions'),
-              builder: (context, transSnap) {
-                return StreamBuilder<QuerySnapshot>(
-                  stream: _getStream('token_requests'),
-                  builder: (context, tokenSnap) {
-                    return StreamBuilder<QuerySnapshot>(
-                      stream: _getStream('manual_transactions'),
-                      builder: (context, manualSnap) {
-                        if (transSnap.hasError || tokenSnap.hasError || manualSnap.hasError) {
-                          return const Center(child: Text("Terjadi kesalahan memuat data."));
-                        }
-                        
-                        final bool transWaiting = transSnap.connectionState == ConnectionState.waiting && !transSnap.hasData;
-                        final bool tokenWaiting = tokenSnap.connectionState == ConnectionState.waiting && !tokenSnap.hasData;
-                        final bool manualWaiting = manualSnap.connectionState == ConnectionState.waiting && !manualSnap.hasData;
-                        
-                        if (transWaiting && tokenWaiting && manualWaiting) {
-                          return const Center(child: CircularProgressIndicator());
-                        }
-
-                        int totalIncome = 0;
-                        int totalExpense = 0;
-                        List<Map<String, dynamic>> allTransactions = [];
-
-                    // Proses Transaksi Pemasukan (Mesin)
-                    if (transSnap.hasData) {
-                      for (var doc in transSnap.data!.docs) {
-                        final data = doc.data() as Map<String, dynamic>;
-                        final int amount = data['amount'] ?? 0;
-                        totalIncome += amount;
-                        
-                        DateTime? date;
-                        if (data['timestamp'] != null) {
-                          date = (data['timestamp'] as Timestamp).toDate();
-                        }
-                        
-                        allTransactions.add({
-                          'title': "Pemakaian - ${data['machine_name'] ?? 'Mesin'}",
-                          'date': date,
-                          'amountStr': "+ Rp ${_formatRupiahPositive(amount)}",
-                          'rawAmount': amount,
-                          'isIncome': true,
-                          'isManual': false,
-                          'timestamp': data['timestamp'],
-                        });
-                      }
-                    }
-
-                    // Proses Transaksi Pengeluaran (Beli Token)
-                    if (tokenSnap.hasData) {
-                      for (var doc in tokenSnap.data!.docs) {
-                        final data = doc.data() as Map<String, dynamic>;
-                        final int price = data['price'] ?? 0;
-                        totalExpense += price;
-                        
-                        DateTime? date;
-                        if (data['created_at'] != null) {
-                          date = (data['created_at'] as Timestamp).toDate();
-                        }
-                        
-                        allTransactions.add({
-                          'title': "Beli Token - ${data['package_name'] ?? 'Paket'}",
-                          'date': date,
-                          'amountStr': "- Rp ${_formatRupiahPositive(price)}",
-                          'rawAmount': price,
-                          'isIncome': false,
-                          'isManual': false,
-                          'timestamp': data['created_at'],
-                        });
-                      }
-                    }
-
-                    // Proses Transaksi Manual
-                    if (manualSnap.hasData) {
-                      for (var doc in manualSnap.data!.docs) {
-                        final data = doc.data() as Map<String, dynamic>;
-                        final int amount = data['amount'] ?? 0;
-                        final bool isIncome = data['type'] == 'income';
-                        
-                        if (isIncome) {
-                          totalIncome += amount;
-                        } else {
-                          totalExpense += amount;
-                        }
-                        
-                        DateTime? date;
-                        if (data['timestamp'] != null) {
-                          date = (data['timestamp'] as Timestamp).toDate();
-                        }
-                        
-                        allTransactions.add({
-                          'docId': doc.id,
-                          'title': data['title'] ?? (isIncome ? 'Pemasukan Manual' : 'Pengeluaran Manual'),
-                          'date': date,
-                          'amountStr': "${isIncome ? '+' : '-'} Rp ${_formatRupiahPositive(amount)}",
-                          'rawAmount': amount,
-                          'isIncome': isIncome,
-                          'isManual': true,
-                          'timestamp': data['timestamp'],
-                        });
-                      }
-                    }
-
-                    final int totalBalance = totalIncome - totalExpense;
-
-                    // Sort transaksi berdasarkan waktu terbaru (descending)
-                    allTransactions.sort((a, b) {
-                      final timeA = a['timestamp'] as Timestamp?;
-                      final timeB = b['timestamp'] as Timestamp?;
-                      if (timeA == null && timeB == null) return 0;
-                      if (timeA == null) return 1;
-                      if (timeB == null) return -1;
-                      return timeB.compareTo(timeA);
-                    });
-
-                    if (widget.userRole == 'Cashier') {
-                      final now = DateTime.now();
-                      allTransactions = allTransactions.where((t) {
-                        if (t['date'] == null) return false;
-                        DateTime date = t['date'] as DateTime;
-                        return date.year == now.year && date.month == now.month && date.day == now.day;
-                      }).toList();
-                      
-                      int todayQris = 0;
-                      int todayCash = 0;
-                      int todayExpense = 0;
-
-                      for (var t in allTransactions) {
-                        if (t['isIncome'] == true) {
-                          if (t['isManual'] == true) {
-                            todayCash += (t['rawAmount'] ?? 0) as int;
-                          } else {
-                            todayQris += (t['rawAmount'] ?? 0) as int;
-                          }
-                        } else {
-                          todayExpense += (t['rawAmount'] ?? 0) as int;
-                        }
-                      }
-                      
-                      return _buildCashierView(context, allTransactions, todayQris, todayCash, todayExpense, isDark);
-                    } else {
-                      return _buildOwnerView(context, allTransactions, totalIncome, totalExpense, totalBalance, isDark);
-                    }
-                  },
-                );
-              },
-            );
-          },
-        ),
-      ),
+            child: _isLoading 
+                ? const Center(child: CircularProgressIndicator())
+                : _buildContent(context, isDark),
+          ),
         ],
       ),
     );
+  }
+
+  Widget _buildContent(BuildContext context, bool isDark) {
+    int totalBalance = _totalIncome - _totalExpense;
+    
+    if (widget.userRole == 'Cashier') {
+      final now = DateTime.now();
+      final cashierTxs = _allTransactions.where((t) {
+        if (t['date'] == null) return false;
+        DateTime date = t['date'] as DateTime;
+        return date.year == now.year && date.month == now.month && date.day == now.day;
+      }).toList();
+      
+      int todayQris = 0;
+      int todayCash = 0;
+      int todayExpense = 0;
+
+      for (var t in cashierTxs) {
+        if (t['isIncome'] == true) {
+          if (t['isManual'] == true) {
+            todayCash += (t['rawAmount'] ?? 0) as int;
+          } else {
+            todayQris += (t['rawAmount'] ?? 0) as int;
+          }
+        } else {
+          todayExpense += (t['rawAmount'] ?? 0) as int;
+        }
+      }
+      
+      return _buildCashierView(context, cashierTxs, todayQris, todayCash, todayExpense, isDark);
+    } else {
+      return _buildOwnerView(context, _allTransactions, _totalIncome, _totalExpense, totalBalance, isDark);
+    }
   }
 
   Widget _buildCashierView(BuildContext context, List<Map<String, dynamic>> allTransactions, int todayQris, int todayCash, int todayExpense, bool isDark) {
@@ -692,9 +670,14 @@ class _StatsPageState extends State<StatsPage> {
             child: const Text("Batal"),
           ),
           TextButton(
-            onPressed: () {
-              FirebaseFirestore.instance.collection('manual_transactions').doc(docId).delete();
+            onPressed: () async {
               Navigator.pop(context);
+              final success = await ApiService().deleteManualTransaction(docId);
+              if (success) {
+                if (mounted) _fetchData();
+              } else {
+                if (mounted) CustomSnackbar.show(context, const SnackBar(content: Text("Gagal menghapus")));
+              }
             },
             child: const Text("Hapus", style: TextStyle(color: Colors.red)),
           ),
@@ -850,34 +833,31 @@ class _StatsPageState extends State<StatsPage> {
                           setState(() => isLoading = true);
 
                           try {
+                            String targetStore = _selectedFilterStoreId ?? widget.selectedStoreId ?? '';
+                            if (targetStore.isEmpty) {
+                              CustomSnackbar.show(context, const SnackBar(content: Text("Pilih toko dulu")));
+                              if (context.mounted) setState(() => isLoading = false);
+                              return;
+                            }
+                            
+                            Map<String, dynamic> result;
                             if (docId == null) {
-                              await FirebaseFirestore.instance.collection('manual_transactions').add({
-                                'store_id': _selectedFilterStoreId ?? widget.selectedStoreId,
-                                'title': title,
-                                'amount': amount,
-                                'type': selectedType,
-                                'timestamp': FieldValue.serverTimestamp(),
-                              });
+                              result = await ApiService().addManualTransaction(targetStore, title, amount, selectedType);
                             } else {
-                              await FirebaseFirestore.instance.collection('manual_transactions').doc(docId).update({
-                                'title': title,
-                                'amount': amount,
-                                'type': selectedType,
-                              });
+                              result = await ApiService().updateManualTransaction(docId, title, amount, selectedType);
                             }
                             
                             if (context.mounted) {
-                              Navigator.pop(context);
-                              CustomSnackbar.show(context, 
-                                SnackBar(content: Text(docId == null ? "Transaksi berhasil ditambahkan" : "Transaksi berhasil diubah")),
-                              );
+                              if (result['success']) {
+                                Navigator.pop(context);
+                                CustomSnackbar.show(context, SnackBar(content: Text("Transaksi tersimpan")));
+                                _fetchData();
+                              } else {
+                                CustomSnackbar.show(context, SnackBar(content: Text("Gagal: ${result['message']}")));
+                              }
                             }
                           } catch (e) {
-                            if (context.mounted) {
-                              CustomSnackbar.show(context, 
-                                SnackBar(content: Text("Gagal menyimpan data: $e")),
-                              );
-                            }
+                            if (context.mounted) CustomSnackbar.show(context, SnackBar(content: Text("Gagal: $e")));
                           } finally {
                             if (context.mounted) setState(() => isLoading = false);
                           }

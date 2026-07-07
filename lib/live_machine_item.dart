@@ -51,7 +51,7 @@ class _LiveMachineItemState extends State<LiveMachineItem> with SingleTickerProv
     final rawStatus = data['status']?.toString() ?? 'Idle';
     final type = data['type']?.toString() ?? 'Washer';
     
-    final currentAmpere = double.tryParse(data['current_ampere']?.toString() ?? '0') ?? 0.0;
+    final currentAmpere = double.tryParse(data['current_ampere']?.toString() ?? data['current']?.toString() ?? '0') ?? 0.0;
     
     Color color = const Color(0xFFF59E0B); // Idle
     double progress = 0.0;
@@ -70,8 +70,18 @@ class _LiveMachineItemState extends State<LiveMachineItem> with SingleTickerProv
       
       final timerEnabled = data['timer_enabled'] == true;
       if (timerEnabled && data['start_time'] != null && data['duration_minutes'] != null) {
-         final startTime = (data['start_time'] as Timestamp).toDate();
-         final durationMins = data['duration_minutes'] as int;
+         DateTime startTime;
+         if (data['start_time'] is Timestamp) {
+           startTime = (data['start_time'] as Timestamp).toDate();
+         } else if (data['start_time'] is String) {
+           startTime = DateTime.tryParse(data['start_time'])?.toLocal() ?? DateTime.now();
+         } else if (data['start_time'] is int || data['start_time'] is double) {
+           startTime = DateTime.fromMillisecondsSinceEpoch((data['start_time'] as num).toInt());
+         } else {
+           startTime = DateTime.now();
+         }
+         
+         final durationMins = (data['duration_minutes'] as num).toInt();
          final endTime = startTime.add(Duration(minutes: durationMins));
          final now = DateTime.now();
          

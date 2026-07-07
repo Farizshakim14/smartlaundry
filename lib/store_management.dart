@@ -438,7 +438,7 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
       // Coba upload foto jika ada
       if (_imageFile != null) {
         try {
-          final uri = Uri.parse('http://103.150.226.111:3000/upload-logo');
+          final uri = Uri.parse('http://103.150.226.111/node/upload-logo');
           final request = http.MultipartRequest('POST', uri);
           
           if (kIsWeb) {

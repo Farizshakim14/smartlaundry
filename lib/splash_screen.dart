@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'onboarding.dart';
 import 'dashboard.dart';
+import 'services/api_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -44,19 +45,21 @@ class SplashScreenState extends State<SplashScreen>
 
     _mainController.forward();
 
-    Timer(const Duration(milliseconds: 3500), () {
-      final user = FirebaseAuth.instance.currentUser;
-      Widget next = user != null ? const DashboardPage() : const OnboardingPage();
-      Navigator.pushReplacement(
-        context,
-        PageRouteBuilder(
-          transitionDuration: const Duration(milliseconds: 800),
-          pageBuilder: (_, __, ___) => next,
-          transitionsBuilder: (_, animation, __, child) {
-            return FadeTransition(opacity: animation, child: child);
-          },
-        ),
-      );
+    Timer(const Duration(milliseconds: 3500), () async {
+      final token = await ApiService().getToken();
+      Widget next = token != null ? const DashboardPage() : const OnboardingPage();
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          PageRouteBuilder(
+            transitionDuration: const Duration(milliseconds: 800),
+            pageBuilder: (_, __, ___) => next,
+            transitionsBuilder: (_, animation, __, child) {
+              return FadeTransition(opacity: animation, child: child);
+            },
+          ),
+        );
+      }
     });
   }
 
