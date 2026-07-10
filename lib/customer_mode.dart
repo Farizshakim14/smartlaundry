@@ -2,12 +2,14 @@ import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'dart:async';
 import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:aplikasilaundry/activity_service.dart';
+import 'package:aplikasilaundry/services/api_service.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -25,11 +27,18 @@ class _CustomerModePageState extends State<CustomerModePage> {
   Map<String, Timer> _machineTimers = {};
   Map<String, int> _remainingSeconds = {};
   String _currentPin = "1234";
+  
+  List<Map<String, dynamic>> _machines = [];
+  List<Map<String, dynamic>> _queues = [];
+  Timer? _pollingTimer;
+  StreamSubscription<DatabaseEvent>? _rtdbSubscription;
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _checkAndForcePinSetup();
+    _initData();
   }
 
   Future<void> _checkAndForcePinSetup() async {
@@ -106,22 +115,94 @@ class _CustomerModePageState extends State<CustomerModePage> {
 
   @override
   void dispose() {
+    _pollingTimer?.cancel();
+    _rtdbSubscription?.cancel();
     for (var timer in _machineTimers.values) {
       timer.cancel();
     }
     super.dispose();
   }
 
-  void _updateTimers(List<QueryDocumentSnapshot> docs) {
-    for (var doc in docs) {
-      final data = doc.data() as Map<String, dynamic>;
-      final machineId = doc.id;
+  Future<void> _initData() async {
+    // 1. Ambil data master dari Laravel (MySQL)
+    try {
+      final mysqlMachines = await ApiService().getMachines(storeId: widget.storeId);
+      final queues = await ApiService().getQueues(widget.storeId, status: 'Pending');
+      
+      if (!mounted) return;
+      setState(() {
+        _machines = mysqlMachines;
+        _queues = queues;
+        _isLoading = false;
+      });
+      _updateTimers(_machines);
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+
+    // 2. Setup RTDB listener untuk status realtime
+    _rtdbSubscription = FirebaseDatabase.instance.ref('machines').onValue.listen((event) {
+      if (event.snapshot.value == null) return;
+      final rtdbData = event.snapshot.value as Map<dynamic, dynamic>;
+
+      if (mounted) {
+        setState(() {
+          for (var i = 0; i < _machines.length; i++) {
+            final machineId = _machines[i]['id'].toString();
+            final rtdbMachine = rtdbData['Mesin$machineId'] ?? rtdbData[machineId];
+            
+            if (rtdbMachine != null) {
+              _machines[i]['status'] = rtdbMachine['status'] ?? _machines[i]['status'];
+              _machines[i]['timer_enabled'] = rtdbMachine['timer_enabled'] ?? _machines[i]['timer_enabled'];
+              _machines[i]['duration_minutes'] = rtdbMachine['duration_minutes'] ?? _machines[i]['duration_minutes'];
+              
+              if (rtdbMachine['start_time'] != null) {
+                if (rtdbMachine['start_time'] is int) {
+                  _machines[i]['start_time'] = DateTime.fromMillisecondsSinceEpoch(rtdbMachine['start_time']);
+                } else if (rtdbMachine['start_time'] is String) {
+                  _machines[i]['start_time'] = DateTime.parse(rtdbMachine['start_time']);
+                }
+              }
+            }
+          }
+          _updateTimers(_machines);
+        });
+      }
+    });
+
+    // 3. Polling API untuk antrean tiap 5 detik
+    _pollingTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
+      try {
+        final queues = await ApiService().getQueues(widget.storeId, status: 'Pending');
+        if (mounted) {
+          setState(() {
+            _queues = queues;
+          });
+        }
+      } catch (e) {
+        // Abaikan error polling
+      }
+    });
+  }
+
+  void _updateTimers(List<Map<String, dynamic>> docs) {
+    for (var data in docs) {
+      final machineId = data['id'].toString();
       final status = data['status'];
-      final timerEnabled = data['timer_enabled'] ?? false;
+      final rawTimer = data['timer_enabled'];
+      final timerEnabled = rawTimer == true || rawTimer == 1 || rawTimer == '1' || rawTimer == 'true';
       
       if (status == 'Active' && timerEnabled && data['start_time'] != null && data['duration_minutes'] != null) {
-        final startTime = (data['start_time'] as Timestamp).toDate();
-        final durationMinutes = data['duration_minutes'] as int;
+        DateTime startTime;
+        if (data['start_time'] is Timestamp) {
+          startTime = (data['start_time'] as Timestamp).toDate();
+        } else if (data['start_time'] is DateTime) {
+          startTime = data['start_time'];
+        } else {
+          startTime = DateTime.tryParse(data['start_time'].toString()) ?? DateTime.now();
+        }
+        
+        final durationMinutes = int.tryParse(data['duration_minutes'].toString()) ?? 0;
         final endTime = startTime.add(Duration(minutes: durationMinutes));
         final remaining = endTime.difference(DateTime.now()).inSeconds;
 
@@ -190,7 +271,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
 
     // 3. Panggil API Midtrans
     try {
-      const String serverUrl = 'http://103.150.226.111/node/pay-service';
+      const String serverUrl = 'http://103.150.226.111/api/pay-service';
       final response = await http.post(
         Uri.parse(serverUrl),
         headers: {'Content-Type': 'application/json'},
@@ -292,20 +373,24 @@ class _CustomerModePageState extends State<CustomerModePage> {
       }
     );
 
-    // Listen ke Firestore
-    StreamSubscription<DocumentSnapshot>? sub;
-    sub = FirebaseFirestore.instance.collection('service_requests').doc(orderId).snapshots().listen((doc) {
-      if (doc.exists && doc.data() != null) {
-        final data = doc.data() as Map<String, dynamic>;
-        if (data['status'] == 'Paid') {
-          // Tutup loading
-          sub?.cancel();
-          if (mounted) {
-            Navigator.pop(context); // Tutup dialog menunggu
-            _showReceiptDialog(orderId, customerName, washQty, dryQty, price);
-          }
+    // Polling API Tiap 3 Detik
+    Timer? waitTimer;
+    waitTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
+      final status = await ApiService().getServiceRequestStatus(orderId);
+      if (status != null && status['status'] == 'Paid') {
+        timer.cancel();
+        if (mounted) {
+          Navigator.pop(context); // Tutup dialog menunggu
+          _showReceiptDialog(orderId, customerName, washQty, dryQty, price);
         }
       }
+    });
+
+    // Hentikan timer jika dialog ditutup paksa
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (context) => const SizedBox.shrink()),
+    ).then((_) {
+      waitTimer?.cancel();
     });
   }
 
@@ -462,14 +547,9 @@ class _CustomerModePageState extends State<CustomerModePage> {
       builder: (context) => const Center(child: CircularProgressIndicator()),
     );
 
-    final snap = await FirebaseFirestore.instance
-        .collection('pelanggan')
-        .where('store_id', isEqualTo: widget.storeId)
-        .get();
+    final customers = await ApiService().getCustomers(widget.storeId);
         
     if (mounted) Navigator.pop(context); // Tutup loading
-
-    List<Map<String, dynamic>> customers = snap.docs.map((d) => d.data() as Map<String, dynamic>).toList();
 
     if (!mounted) return;
 
@@ -659,8 +739,8 @@ class _CustomerModePageState extends State<CustomerModePage> {
                       // Cek apakah pelanggan ini baru
                       final existing = customers.where((c) => c['name'] == name && c['phone'] == phone).toList();
                       if (existing.isEmpty) {
-                        // Simpan ke Firestore
-                        await FirebaseFirestore.instance.collection('pelanggan').add({
+                        // Simpan ke MySQL via API
+                        await ApiService().addCustomer({
                           'name': name,
                           'phone': phone,
                           'store_id': widget.storeId,
@@ -707,11 +787,14 @@ class _CustomerModePageState extends State<CustomerModePage> {
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(context);
-              // Ubah status jadi Active, trigger server & esp32
-              await FirebaseFirestore.instance.collection('machines').doc(machineId).update({
-                'status': 'Active',
-                'start_time': FieldValue.serverTimestamp(),
-              });
+              
+              showDialog(context: context, barrierDismissible: false, builder: (context) => const Center(child: CircularProgressIndicator()));
+              
+              // Mulai mesin via API
+              final timerEnabled = machine['timer_enabled'] == true || machine['timer_enabled'] == 1 || machine['timer_enabled'] == '1';
+              final duration = timerEnabled ? (int.tryParse(machine['duration_minutes']?.toString() ?? '0') ?? 0) : 0;
+              
+              await ApiService().startMachine(machineId, timerEnabled, duration);
               
               await ActivityService.logActivity(
                 storeId: widget.storeId,
@@ -719,6 +802,7 @@ class _CustomerModePageState extends State<CustomerModePage> {
               );
               
               if (mounted) {
+                Navigator.pop(context);
                 CustomSnackbar.show(context, SnackBar(content: Text("Mesin ${machine['name']} dimulai!")));
               }
             },
@@ -732,325 +816,296 @@ class _CustomerModePageState extends State<CustomerModePage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    final washers = _machines.where((m) => m['type'] == 'Washer').toList();
+    final dryers = _machines.where((m) => m['type'] == 'Dryer').toList();
+    
+    // Sort by name
+    washers.sort((a, b) => (a['name'] ?? '').toString().compareTo((b['name'] ?? '').toString()));
+    dryers.sort((a, b) => (a['name'] ?? '').toString().compareTo((b['name'] ?? '').toString()));
+
+    final allSortedMachines = [...washers, ...dryers];
+
+    // Hitung default price
+    int defaultWashPrice = 15000;
+    int defaultDryPrice = 15000;
+    if (washers.isNotEmpty) {
+      defaultWashPrice = int.tryParse(washers.first['price']?.toString() ?? '15000') ?? 15000;
+    }
+    if (dryers.isNotEmpty) {
+      defaultDryPrice = int.tryParse(dryers.first['price']?.toString() ?? '15000') ?? 15000;
+    }
+
     return PopScope(
       canPop: false,
       child: Scaffold(
         backgroundColor: const Color(0xFFF4F7FA),
         body: SafeArea(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('machines')
-                .where('store_id', isEqualTo: widget.storeId)
-                .snapshots(),
-            builder: (context, machineSnapshot) {
-              if (machineSnapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
+          child: Column(
+            children: [
+              // Header & Tombol Utama
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(color: const Color(0xFF2563EB), borderRadius: BorderRadius.circular(12)),
+                            child: const Icon(Icons.local_laundry_service, color: Colors.white, size: 28),
+                          ),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text("Self-Service Laundry", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)), overflow: TextOverflow.ellipsis),
+                                Text("Pesan layanan & pantau mesin", style: TextStyle(fontSize: 12, color: Color(0xFF64748B)), overflow: TextOverflow.ellipsis),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      onPressed: () => _showOrderDialog(defaultWashPrice, defaultDryPrice),
+                      icon: const Icon(Icons.add_shopping_cart, color: Colors.white, size: 20),
+                      label: const Text("PESAN", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2563EB),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
-              final machines = machineSnapshot.data?.docs ?? [];
-              // Pisahkan Washer dan Dryer
-              final washers = machines.where((doc) => (doc.data() as Map<String, dynamic>)['type'] == 'Washer').toList();
-              final dryers = machines.where((doc) => (doc.data() as Map<String, dynamic>)['type'] == 'Dryer').toList();
-              
-              // Sort by name
-              washers.sort((a, b) => ((a.data() as Map<String, dynamic>)['name'] ?? '').compareTo((b.data() as Map<String, dynamic>)['name'] ?? ''));
-              dryers.sort((a, b) => ((a.data() as Map<String, dynamic>)['name'] ?? '').compareTo((b.data() as Map<String, dynamic>)['name'] ?? ''));
-
-              final allSortedMachines = [...washers, ...dryers];
-
-              // Hitung default price
-              int defaultWashPrice = 15000;
-              int defaultDryPrice = 15000;
-              if (washers.isNotEmpty) {
-                defaultWashPrice = (washers.first.data() as Map<String, dynamic>)['price'] ?? 15000;
-              }
-              if (dryers.isNotEmpty) {
-                defaultDryPrice = (dryers.first.data() as Map<String, dynamic>)['price'] ?? 15000;
-              }
-
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) _updateTimers(machines);
-              });
-
-              return StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('queues')
-                    .where('store_id', isEqualTo: widget.storeId)
-                    .where('status', isEqualTo: 'Pending')
-                    .orderBy('created_at', descending: false)
-                    .snapshots(),
-                builder: (context, queueSnapshot) {
-                  List<QueryDocumentSnapshot> pendingQueues = [];
-                  if (queueSnapshot.hasData) {
-                    pendingQueues = queueSnapshot.data!.docs;
-                  }
-
-                  return Column(
-                    children: [
-                      // Header & Tombol Utama
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Row(
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.all(10),
-                                    decoration: BoxDecoration(color: const Color(0xFF2563EB), borderRadius: BorderRadius.circular(12)),
-                                    child: const Icon(Icons.local_laundry_service, color: Colors.white, size: 28),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    bool isWide = constraints.maxWidth >= 900;
+                    
+                    Widget gridSection = Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text("Status Mesin", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 16),
+                          Expanded(
+                            child: allSortedMachines.isEmpty 
+                              ? const Center(child: Text("Belum ada mesin.", style: TextStyle(fontSize: 16, color: Color(0xFF64748B))))
+                              : GridView.builder(
+                                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: isWide ? 2 : (constraints.maxWidth > 600 ? 2 : 1),
+                                    childAspectRatio: isWide ? 1.2 : 1.5,
+                                    crossAxisSpacing: 16,
+                                    mainAxisSpacing: 16,
                                   ),
-                                  const SizedBox(width: 12),
-                                  const Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text("Self-Service Laundry", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)), overflow: TextOverflow.ellipsis),
-                                        Text("Pesan layanan & pantau mesin", style: TextStyle(fontSize: 12, color: Color(0xFF64748B)), overflow: TextOverflow.ellipsis),
+                                  itemCount: allSortedMachines.length,
+                                  itemBuilder: (context, index) {
+                                  final machineData = allSortedMachines[index];
+                                  final machineId = machineData['id'].toString();
+                                  final status = machineData['status'] ?? 'Idle';
+                                  final isWasher = machineData['type'] == 'Washer';
+
+                                  Color cardColor;
+                                  Color textColor;
+                                  if (status == 'Active') {
+                                    cardColor = const Color(0xFFFEE2E2);
+                                    textColor = const Color(0xFFDC2626);
+                                  } else if (status == 'Ready') {
+                                    cardColor = const Color(0xFFFEF3C7);
+                                    textColor = const Color(0xFFD97706);
+                                  } else {
+                                    cardColor = Colors.white;
+                                    textColor = const Color(0xFF10B981);
+                                  }
+
+                                  return Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(color: cardColor, width: 2),
+                                      boxShadow: [
+                                        BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))
                                       ],
                                     ),
-                                  ),
-                                ],
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                          decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(20)),
+                                          child: Text(
+                                            status == 'Active' ? 'Sedang Dipakai' : (status == 'Ready' ? 'Siap Digunakan' : 'Tersedia'),
+                                            style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 12),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Icon(
+                                          isWasher ? Icons.local_laundry_service : Icons.dry_cleaning,
+                                          size: 54,
+                                          color: const Color(0xFF2563EB),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(machineData['name'] ?? 'Mesin', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                                        const SizedBox(height: 8),
+
+                                        if (status == 'Active') ...[
+                                          Text(
+                                            "${((_remainingSeconds[machineId] ?? 0) ~/ 60).toString().padLeft(2, '0')}:${((_remainingSeconds[machineId] ?? 0) % 60).toString().padLeft(2, '0')}",
+                                            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
+                                          ),
+                                        ] else if (status == 'Ready') ...[
+                                          Text("Milik: ${machineData['assigned_to']}", style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFFD97706))),
+                                          const SizedBox(height: 8),
+                                          ElevatedButton.icon(
+                                            onPressed: () => _confirmPlay(machineData, machineId),
+                                            icon: const Icon(Icons.play_arrow, color: Colors.white, size: 16),
+                                            label: const Text("PLAY", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: const Color(0xFF2563EB),
+                                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                            ),
+                                          )
+                                        ] else ...[
+                                          Text("Mesin Cuci", style: TextStyle(color: Colors.grey[600])),
+                                        ]
+                                      ],
+                                    ),
+                                  );
+                                },
                               ),
+                          ),
+                        ],
+                      ),
+                    );
+
+                    Widget queueSection = Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          border: isWide 
+                            ? const Border(left: BorderSide(color: Color(0xFFE5E7EB)))
+                            : const Border(top: BorderSide(color: Color(0xFFE5E7EB))),
+                        ),
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Row(
+                              children: [
+                                Icon(Icons.people_alt, color: Color(0xFF2563EB)),
+                                SizedBox(width: 8),
+                                Text("Daftar Antrean", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                              ],
                             ),
-                            const SizedBox(width: 8),
-                            ElevatedButton.icon(
-                              onPressed: () => _showOrderDialog(defaultWashPrice, defaultDryPrice),
-                              icon: const Icon(Icons.add_shopping_cart, color: Colors.white, size: 20),
-                              label: const Text("PESAN", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF2563EB),
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            const SizedBox(height: 16),
+                            Expanded(
+                              child: _queues.isEmpty
+                                  ? const Center(child: Text("Tidak ada antrean saat ini.", style: TextStyle(color: Colors.grey)))
+                                  : ListView.builder(
+                                      itemCount: _queues.length,
+                                      itemBuilder: (context, index) {
+                                        final q = _queues[index];
+                                        return Card(
+                                          elevation: 0,
+                                          color: const Color(0xFFF8FAFC),
+                                          margin: const EdgeInsets.only(bottom: 12),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                            side: BorderSide(color: Colors.blue.shade100),
+                                          ),
+                                          child: ListTile(
+                                            leading: CircleAvatar(
+                                              backgroundColor: Colors.blue.shade100,
+                                              child: Text("${index + 1}", style: const TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.bold)),
+                                            ),
+                                            title: Text(q['customer_name'] ?? 'Pelanggan', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                            subtitle: Text("Menunggu: ${q['step'] == 'Wash' ? 'Mesin Cuci' : 'Mesin Pengering'}"),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                            ),
+                            
+                            // Tombol Keluar (Admin/Kasir)
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                onPressed: () {
+                                  showDialog(
+                                    context: context,
+                                    builder: (context) {
+                                      final pinController = TextEditingController();
+                                      return AlertDialog(
+                                        title: const Text("Keluar dari Mode Pelanggan"),
+                                        content: TextField(
+                                          controller: pinController,
+                                          obscureText: true,
+                                          keyboardType: TextInputType.number,
+                                          decoration: const InputDecoration(labelText: "Masukkan PIN Admin", border: OutlineInputBorder()),
+                                        ),
+                                        actions: [
+                                          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Batal")),
+                                          ElevatedButton(
+                                            onPressed: () {
+                                              if (pinController.text == _currentPin) {
+                                                Navigator.pop(context);
+                                                Navigator.pop(context);
+                                              } else {
+                                                CustomSnackbar.show(context, const SnackBar(content: Text("PIN Salah!"), backgroundColor: Colors.red));
+                                              }
+                                            },
+                                            child: const Text("Keluar"),
+                                          )
+                                        ],
+                                      );
+                                    }
+                                  );
+                                },
+                                icon: const Icon(Icons.lock, color: Colors.grey),
+                                label: const Text("Keluar (Admin)", style: TextStyle(color: Colors.grey), overflow: TextOverflow.ellipsis),
                               ),
-                            ),
+                            )
                           ],
                         ),
-                      ),
+                      );
 
-                      Expanded(
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            bool isWide = constraints.maxWidth >= 900;
-                            
-                            Widget gridSection = Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text("Status Mesin", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                                  const SizedBox(height: 16),
-                                  Expanded(
-                                    child: allSortedMachines.isEmpty 
-                                      ? const Center(child: Text("Belum ada mesin.", style: TextStyle(fontSize: 16, color: Color(0xFF64748B))))
-                                      : GridView.builder(
-                                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                            crossAxisCount: isWide ? 2 : (constraints.maxWidth > 600 ? 2 : 1),
-                                            childAspectRatio: isWide ? 1.2 : 1.5,
-                                            crossAxisSpacing: 16,
-                                            mainAxisSpacing: 16,
-                                          ),
-                                          itemCount: allSortedMachines.length,
-                                          itemBuilder: (context, index) {
-                                          final machineData = allSortedMachines[index].data() as Map<String, dynamic>;
-                                          final machineId = allSortedMachines[index].id;
-                                          final status = machineData['status'] ?? 'Idle';
-                                          final isWasher = machineData['type'] == 'Washer';
-
-                                          Color cardColor;
-                                          Color textColor;
-                                          if (status == 'Active') {
-                                            cardColor = const Color(0xFFFEE2E2);
-                                            textColor = const Color(0xFFDC2626);
-                                          } else if (status == 'Ready') {
-                                            cardColor = const Color(0xFFFEF3C7);
-                                            textColor = const Color(0xFFD97706);
-                                          } else {
-                                            cardColor = Colors.white;
-                                            textColor = const Color(0xFF10B981);
-                                          }
-
-                                          return Container(
-                                            decoration: BoxDecoration(
-                                              color: Colors.white,
-                                              borderRadius: BorderRadius.circular(20),
-                                              border: Border.all(color: cardColor, width: 2),
-                                              boxShadow: [
-                                                BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))
-                                              ],
-                                            ),
-                                            child: Column(
-                                              mainAxisAlignment: MainAxisAlignment.center,
-                                              children: [
-                                                Container(
-                                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                                                  decoration: BoxDecoration(color: cardColor, borderRadius: BorderRadius.circular(20)),
-                                                  child: Text(
-                                                    status == 'Active' ? 'Sedang Dipakai' : (status == 'Ready' ? 'Siap Digunakan' : 'Tersedia'),
-                                                    style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 12),
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 16),
-                                                Icon(
-                                                  isWasher ? Icons.local_laundry_service : Icons.dry_cleaning,
-                                                  size: 54,
-                                                  color: const Color(0xFF2563EB),
-                                                ),
-                                                const SizedBox(height: 8),
-                                                Text(machineData['name'] ?? 'Mesin', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
-                                                const SizedBox(height: 8),
-
-                                                if (status == 'Active') ...[
-                                                  Text(
-                                                    "${((_remainingSeconds[machineId] ?? 0) ~/ 60).toString().padLeft(2, '0')}:${((_remainingSeconds[machineId] ?? 0) % 60).toString().padLeft(2, '0')}",
-                                                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFFDC2626)),
-                                                  ),
-                                                ] else if (status == 'Ready') ...[
-                                                  Text("Milik: ${machineData['assigned_to']}", style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFFD97706))),
-                                                  const SizedBox(height: 8),
-                                                  ElevatedButton.icon(
-                                                    onPressed: () => _confirmPlay(machineData, machineId),
-                                                    icon: const Icon(Icons.play_arrow, color: Colors.white, size: 16),
-                                                    label: const Text("PLAY", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                                                    style: ElevatedButton.styleFrom(
-                                                      backgroundColor: const Color(0xFF2563EB),
-                                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                                    ),
-                                                  )
-                                                ] else ...[
-                                                  Text("Mesin Cuci", style: TextStyle(color: Colors.grey[600])),
-                                                ]
-                                              ],
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-
-                            Widget queueSection = Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  border: isWide 
-                                    ? const Border(left: BorderSide(color: Color(0xFFE5E7EB)))
-                                    : const Border(top: BorderSide(color: Color(0xFFE5E7EB))),
-                                ),
-                                padding: const EdgeInsets.all(24),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Row(
-                                      children: [
-                                        Icon(Icons.people_alt, color: Color(0xFF2563EB)),
-                                        SizedBox(width: 8),
-                                        Text("Daftar Antrean", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 16),
-                                    Expanded(
-                                      child: pendingQueues.isEmpty
-                                          ? const Center(child: Text("Tidak ada antrean saat ini.", style: TextStyle(color: Colors.grey)))
-                                          : ListView.builder(
-                                              itemCount: pendingQueues.length,
-                                              itemBuilder: (context, index) {
-                                                final q = pendingQueues[index].data() as Map<String, dynamic>;
-                                                return Card(
-                                                  elevation: 0,
-                                                  color: const Color(0xFFF8FAFC),
-                                                  margin: const EdgeInsets.only(bottom: 12),
-                                                  shape: RoundedRectangleBorder(
-                                                    borderRadius: BorderRadius.circular(12),
-                                                    side: BorderSide(color: Colors.blue.shade100),
-                                                  ),
-                                                  child: ListTile(
-                                                    leading: CircleAvatar(
-                                                      backgroundColor: Colors.blue.shade100,
-                                                      child: Text("${index + 1}", style: const TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.bold)),
-                                                    ),
-                                                    title: Text(q['customer_name'] ?? 'Pelanggan', style: const TextStyle(fontWeight: FontWeight.bold)),
-                                                    subtitle: Text("Menunggu: ${q['step'] == 'Wash' ? 'Mesin Cuci' : 'Mesin Pengering'}"),
-                                                  ),
-                                                );
-                                              },
-                                            ),
-                                    ),
-                                    
-                                    // Tombol Keluar (Admin/Kasir)
-                                    const SizedBox(height: 16),
-                                    SizedBox(
-                                      width: double.infinity,
-                                      child: OutlinedButton.icon(
-                                        onPressed: () {
-                                          showDialog(
-                                            context: context,
-                                            builder: (context) {
-                                              final pinController = TextEditingController();
-                                              return AlertDialog(
-                                                title: const Text("Keluar dari Mode Pelanggan"),
-                                                content: TextField(
-                                                  controller: pinController,
-                                                  obscureText: true,
-                                                  keyboardType: TextInputType.number,
-                                                  decoration: const InputDecoration(labelText: "Masukkan PIN Admin", border: OutlineInputBorder()),
-                                                ),
-                                                actions: [
-                                                  TextButton(onPressed: () => Navigator.pop(context), child: const Text("Batal")),
-                                                  ElevatedButton(
-                                                    onPressed: () {
-                                                      if (pinController.text == _currentPin) {
-                                                        Navigator.pop(context);
-                                                        Navigator.pop(context);
-                                                      } else {
-                                                        CustomSnackbar.show(context, const SnackBar(content: Text("PIN Salah!"), backgroundColor: Colors.red));
-                                                      }
-                                                    },
-                                                    child: const Text("Keluar"),
-                                                  )
-                                                ],
-                                              );
-                                            }
-                                          );
-                                        },
-                                        icon: const Icon(Icons.lock, color: Colors.grey),
-                                        label: const Text("Keluar (Admin)", style: TextStyle(color: Colors.grey), overflow: TextOverflow.ellipsis),
-                                      ),
-                                    )
-                                  ],
-                                ),
-                              );
-
-                            if (isWide) {
-                              return Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(flex: 3, child: gridSection),
-                                  Expanded(flex: 1, child: queueSection),
-                                ],
-                              );
-                            } else {
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(flex: 2, child: gridSection),
-                                  Expanded(flex: 1, child: queueSection),
-                                ],
-                              );
-                            }
-                          },
-                        ),
-                      ),
-                    ],
-                  );
-                }
-              );
-            },
+                    if (isWide) {
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(flex: 3, child: gridSection),
+                          Expanded(flex: 1, child: queueSection),
+                        ],
+                      );
+                    } else {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(flex: 2, child: gridSection),
+                          Expanded(flex: 1, child: queueSection),
+                        ],
+                      );
+                    }
+                  },
+                ),
+              ),
+            ],
           ),
         ),
       ),

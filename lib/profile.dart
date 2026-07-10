@@ -12,6 +12,7 @@ import 'package:aplikasilaundry/editprofile.dart';
 import 'package:aplikasilaundry/change_password.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:aplikasilaundry/services/api_service.dart';
 
 class ProfilePage extends StatefulWidget {
   final String? selectedStoreId;
@@ -23,14 +24,29 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  final Map<String, Future<DocumentSnapshot>> _storeCache = {};
+  final Map<String, Future<Map<String, dynamic>?>> _storeCache = {};
   bool _notificationsEnabled = true;
 
-  Future<DocumentSnapshot> _getStoreData(String storeId) {
+  Future<Map<String, dynamic>?> _getStoreData(String storeId) async {
     if (!_storeCache.containsKey(storeId)) {
-      _storeCache[storeId] = FirebaseFirestore.instance.collection('stores').doc(storeId).get();
+      _storeCache[storeId] = ApiService().getStores().then((stores) {
+        try {
+          return stores.firstWhere((s) => s['id'].toString() == storeId);
+        } catch (e) {
+          return null;
+        }
+      });
     }
-    return _storeCache[storeId]!;
+    return _storeCache[storeId];
+  }
+
+  Future<Map<String, dynamic>?> _getUserData(String email) async {
+    try {
+      final users = await ApiService().getUsers();
+      return users.firstWhere((u) => u['email'] == email);
+    } catch (e) {
+      return null;
+    }
   }
 
   @override
@@ -42,10 +58,10 @@ class _ProfilePageState extends State<ProfilePage> {
 
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC), 
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('users').where('email', isEqualTo: email).limit(1).snapshots(),
+      body: FutureBuilder<Map<String, dynamic>?>(
+        future: _getUserData(email),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
@@ -54,8 +70,8 @@ class _ProfilePageState extends State<ProfilePage> {
           String? currentStoreId;
           String currentPhone = "-";
 
-          if (snapshot.hasData && snapshot.data!.docs.isNotEmpty) {
-            final data = snapshot.data!.docs.first.data() as Map<String, dynamic>;
+          if (snapshot.hasData && snapshot.data != null) {
+            final data = snapshot.data!;
             currentRole = data['role']?.toString() ?? 'Unknown';
             currentName = data['name']?.toString() ?? currentName;
             currentStoreId = data['store_id']?.toString();
@@ -165,8 +181,9 @@ class _ProfilePageState extends State<ProfilePage> {
                               ),
                             ),
                             InkWell(
-                              onTap: () {
-                                Navigator.push(context, MaterialPageRoute(builder: (context) => const EditProfilePage()));
+                              onTap: () async {
+                                await Navigator.push(context, MaterialPageRoute(builder: (context) => const EditProfilePage()));
+                                setState(() {});
                               },
                               borderRadius: BorderRadius.circular(50),
                               child: Container(
@@ -211,17 +228,21 @@ class _ProfilePageState extends State<ProfilePage> {
                               _buildInfoRow("No. Handphone", currentPhone, isDark),
                               _buildInfoRow("Role", currentRole, isDark),
                               
-                              if (currentStoreId != null && currentStoreId.isNotEmpty)
-                                FutureBuilder<DocumentSnapshot>(
-                                  future: _getStoreData(currentStoreId),
-                                  builder: (context, storeSnapshot) {
-                                    String storeName = "Loading...";
-                                    if (storeSnapshot.hasData && storeSnapshot.data!.exists) {
-                                      storeName = (storeSnapshot.data!.data() as Map<String, dynamic>)['name']?.toString() ?? '-';
-                                    }
-                                    return _buildInfoRow("Cabang Aktif", storeName, isDark, isLast: true);
-                                  },
-                                )
+                                if (currentStoreId != null && currentStoreId.isNotEmpty)
+                                  FutureBuilder<Map<String, dynamic>?>(
+                                    future: _getStoreData(currentStoreId),
+                                    builder: (context, storeSnapshot) {
+                                      String storeName = "Loading...";
+                                      if (storeSnapshot.connectionState == ConnectionState.done) {
+                                        if (storeSnapshot.hasData && storeSnapshot.data != null) {
+                                          storeName = storeSnapshot.data!['name']?.toString() ?? '-';
+                                        } else {
+                                          storeName = "Cabang tidak ditemukan";
+                                        }
+                                      }
+                                      return _buildInfoRow("Cabang Aktif", storeName, isDark, isLast: true);
+                                    },
+                                  )
                               else
                                 _buildInfoRow("Cabang Aktif", "Belum ada cabang", isDark, isLast: true),
                             ],
@@ -245,11 +266,12 @@ class _ProfilePageState extends State<ProfilePage> {
                               Text("Pengaturan", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: isDark ? Colors.white : const Color(0xFF1E293B))),
                               const SizedBox(height: 8),
                               
-                              _buildSettingsTile(Icons.person_outline, "Edit Profil", isDark, onTap: () {
-                                Navigator.push(context, MaterialPageRoute(builder: (context) => const EditProfilePage()));
+                              _buildSettingsTile(Icons.person_outline, "Edit Profil", isDark, onTap: () async {
+                                await Navigator.push(context, MaterialPageRoute(builder: (context) => const EditProfilePage()));
+                                setState(() {});
                               }),
                               _buildSettingsTile(Icons.lock_outline, "Ubah Password", isDark, onTap: () {
-                                Navigator.push(context, MaterialPageRoute(builder: (context) => const ChangePasswordPage()));
+                                Navigator.push(context, MaterialPageRoute(builder: (context) => ChangePasswordPage(storeId: widget.selectedStoreId ?? currentStoreId)));
                               }),
                               
                               if (currentRole != 'Cashier')

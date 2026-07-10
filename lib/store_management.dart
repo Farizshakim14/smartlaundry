@@ -2,12 +2,11 @@ import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:aplikasilaundry/activity_service.dart';
+import 'package:aplikasilaundry/services/api_service.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'store_detail.dart';
@@ -24,13 +23,14 @@ class StoreManagementPage extends StatefulWidget {
 class _StoreManagementPageState extends State<StoreManagementPage> {
   final User? currentUser = FirebaseAuth.instance.currentUser;
 
-  void _showAddStoreDialog({DocumentSnapshot? existingStore}) {
-    showModalBottomSheet(
+  void _showAddStoreDialog({Map<String, dynamic>? existingStore}) async {
+    await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => StoreFormDialog(existingStore: existingStore, currentRole: widget.currentRole),
     );
+    if (mounted) setState(() {});
   }
 
   void _deleteStore(String storeId) {
@@ -47,32 +47,23 @@ class _StoreManagementPageState extends State<StoreManagementPage> {
             onPressed: () async {
               // Hapus semua data yang berhubungan dengan toko ini terlebih dahulu
               try {
-                final batch = FirebaseFirestore.instance.batch();
+                final success = await ApiService().deleteStore(storeId);
                 
-                // Hapus mesin
-                final machines = await FirebaseFirestore.instance.collection('machines').where('store_id', isEqualTo: storeId).get();
-                for (var doc in machines.docs) { batch.delete(doc.reference); }
-                
-                // Hapus pelanggan
-                final pelanggan = await FirebaseFirestore.instance.collection('pelanggan').where('store_id', isEqualTo: storeId).get();
-                for (var doc in pelanggan.docs) { batch.delete(doc.reference); }
-                
-                // Hapus cashier
-                final cashiers = await FirebaseFirestore.instance.collection('users').where('store_id', isEqualTo: storeId).get();
-                for (var doc in cashiers.docs) { batch.delete(doc.reference); }
-                
-                // Hapus tokonya
-                batch.delete(FirebaseFirestore.instance.collection('stores').doc(storeId));
-                
-                await batch.commit();
-                
-                await ActivityService.logActivity(storeId: storeId, action: "Menghapus toko beserta seluruh isinya");
-                
-                if (mounted) {
-                  Navigator.pop(context);
-                  CustomSnackbar.show(context, 
-                    const SnackBar(content: Text('Store dan seluruh data terkait berhasil dihapus'), backgroundColor: Colors.red),
-                  );
+                if (success) {
+                  await ActivityService.logActivity(storeId: storeId, action: "Menghapus toko beserta seluruh isinya");
+                  if (mounted) {
+                    Navigator.pop(context);
+                    setState(() {}); // refresh
+                    CustomSnackbar.show(context, 
+                      const SnackBar(content: Text('Store dan seluruh data terkait berhasil dihapus'), backgroundColor: Colors.red),
+                    );
+                  }
+                } else {
+                  if (mounted) {
+                    CustomSnackbar.show(context, 
+                      const SnackBar(content: Text('Gagal menghapus toko'), backgroundColor: Colors.red),
+                    );
+                  }
                 }
               } catch (e) {
                 if (mounted) {
@@ -97,13 +88,6 @@ class _StoreManagementPageState extends State<StoreManagementPage> {
     final textColor = isDark ? Colors.white : const Color(0xFF1E293B);
     final primaryColor = isDark ? const Color(0xFF60A5FA) : const Color(0xFF0F3460);
 
-    Query storeQuery = FirebaseFirestore.instance.collection('stores');
-    
-    // Paksa filter hanya toko miliknya sendiri jika bukan Superadmin/Admin
-    if (widget.currentRole != 'Superadmin' && widget.currentRole != 'Admin') {
-      storeQuery = storeQuery.where('owner_email', isEqualTo: currentUser?.email);
-    }
-
     return Scaffold(
       backgroundColor: bgColor,
       appBar: AppBar(
@@ -112,13 +96,13 @@ class _StoreManagementPageState extends State<StoreManagementPage> {
         title: Text("Store Management", style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
         iconTheme: IconThemeData(color: textColor),
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: storeQuery.snapshots(),
+      body: FutureBuilder<List<Map<String, dynamic>>>(
+        future: ApiService().getStores(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          if (!snapshot.hasData || snapshot.data!.isEmpty) {
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -131,14 +115,14 @@ class _StoreManagementPageState extends State<StoreManagementPage> {
             );
           }
 
-          final stores = snapshot.data!.docs;
+          final stores = snapshot.data!;
 
           return ListView.builder(
             padding: const EdgeInsets.all(24),
             itemCount: stores.length,
             itemBuilder: (context, index) {
-              final doc = stores[index];
-              final data = doc.data() as Map<String, dynamic>;
+              final data = stores[index];
+              final storeId = data['id'].toString();
 
               final logoUrl = data['logo_url']?.toString();
               final openTime = data['open_time']?.toString() ?? '08:00';
@@ -166,7 +150,7 @@ class _StoreManagementPageState extends State<StoreManagementPage> {
                         context,
                         MaterialPageRoute(
                           builder: (context) => StoreDetailPage(
-                            storeId: doc.id,
+                            storeId: storeId,
                             storeName: data['name'],
                             currentRole: widget.currentRole,
                           ),
@@ -237,8 +221,8 @@ class _StoreManagementPageState extends State<StoreManagementPage> {
                             icon: const Icon(Icons.more_vert, color: Colors.grey),
                             color: cardColor,
                             onSelected: (value) {
-                              if (value == 'edit') _showAddStoreDialog(existingStore: doc);
-                              if (value == 'delete') _deleteStore(doc.id);
+                              if (value == 'edit') _showAddStoreDialog(existingStore: data);
+                              if (value == 'delete') _deleteStore(storeId);
                             },
                             itemBuilder: (context) => [
                               PopupMenuItem(value: 'edit', child: Text("Edit", style: TextStyle(color: textColor))),
@@ -266,7 +250,7 @@ class _StoreManagementPageState extends State<StoreManagementPage> {
 }
 
 class StoreFormDialog extends StatefulWidget {
-  final DocumentSnapshot? existingStore;
+  final Map<String, dynamic>? existingStore;
   final String currentRole;
 
   const StoreFormDialog({super.key, this.existingStore, required this.currentRole});
@@ -306,7 +290,7 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
   @override
   void initState() {
     super.initState();
-    final data = widget.existingStore?.data() as Map<String, dynamic>?;
+    final data = widget.existingStore;
     
     _name = data?['name'] ?? '';
     _address = data?['address'] ?? '';
@@ -354,14 +338,13 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
 
   Future<void> _fetchOwners() async {
     try {
-      final snap = await FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'Owner').get();
+      final users = await ApiService().getUsers(role: 'Owner');
       if (mounted) {
         setState(() {
-          _ownerList = snap.docs.map((d) {
-            final data = d.data();
+          _ownerList = users.map((d) {
             return {
-              'email': data['email']?.toString() ?? '',
-              'name': data['name']?.toString() ?? data['email']?.toString() ?? '',
+              'email': d['email']?.toString() ?? '',
+              'name': d['name']?.toString() ?? d['email']?.toString() ?? '',
             };
           }).toList();
           
@@ -478,47 +461,38 @@ class _StoreFormDialogState extends State<StoreFormDialog> {
         'close_time': _formatTime(_closeTime),
         'logo_url': logoUrl,
         'owner_email': _ownerEmail.isNotEmpty ? _ownerEmail : (FirebaseAuth.instance.currentUser?.email ?? ''),
-        'updated_at': FieldValue.serverTimestamp(),
       };
 
       if (widget.existingStore != null) {
-        final storeRef = FirebaseFirestore.instance.collection('stores').doc(widget.existingStore!.id);
-        await storeRef.update(storeData);
+        final storeId = widget.existingStore!['id'].toString();
+        final result = await ApiService().updateStore(storeId, storeData);
         
-        // Update all machines prices for this store
-        final machinesSnap = await FirebaseFirestore.instance.collection('machines').where('store_id', isEqualTo: widget.existingStore!.id).get();
-        if (machinesSnap.docs.isNotEmpty) {
-          final batch = FirebaseFirestore.instance.batch();
-          int washerPrice = int.tryParse(_priceWasher) ?? 0;
-          int dryerPrice = int.tryParse(_priceDryer) ?? 0;
-          for (var doc in machinesSnap.docs) {
-            final mData = doc.data();
-            if (mData['type'] == 'Washer') {
-              batch.update(doc.reference, {'price': washerPrice});
-            } else if (mData['type'] == 'Dryer') {
-              batch.update(doc.reference, {'price': dryerPrice});
-            }
-          }
-          await batch.commit();
+        if (result['success']) {
+          await ActivityService.logActivity(
+            storeId: storeId,
+            action: "Mengubah profil toko ($_name)",
+          );
+        } else {
+          throw Exception(result['message']);
         }
-
-        await ActivityService.logActivity(
-          storeId: widget.existingStore!.id,
-          action: "Mengubah profil toko ($_name)",
-        );
       } else {
-        storeData['created_at'] = FieldValue.serverTimestamp();
-        final docRef = await FirebaseFirestore.instance.collection('stores').add(storeData);
-        await ActivityService.logActivity(
-          storeId: docRef.id,
-          action: "Mendaftarkan toko baru ($_name)",
-        );
+        final result = await ApiService().addStore(storeData);
+        if (result['success']) {
+          await ActivityService.logActivity(
+            storeId: result['store']['id'].toString(),
+            action: "Mendaftarkan toko baru ($_name)",
+          );
+        } else {
+          throw Exception(result['message']);
+        }
       }
 
       if (mounted) {
         Navigator.pop(context); // Tutup bottom sheet
+        // We can't automatically refresh the list from this dialog easily without a callback, 
+        // so we could navigate off and on, or rely on a state management tool. For now, just show snackbar.
         CustomSnackbar.show(context, 
-          SnackBar(content: Text(widget.existingStore != null ? 'Toko diperbarui!' : 'Toko ditambahkan!'), backgroundColor: const Color(0xFF10B981)),
+          SnackBar(content: Text(widget.existingStore != null ? 'Toko diperbarui! Buka ulang halaman untuk melihat perubahan.' : 'Toko ditambahkan! Buka ulang halaman untuk melihat perubahan.'), backgroundColor: const Color(0xFF10B981)),
         );
       }
     } catch (e) {

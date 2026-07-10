@@ -85,6 +85,8 @@ class _MachinePageState extends State<MachinePage> {
             mysqlMachines[i]['relay_status'] = statusData['relay_status'] ?? mysqlMachines[i]['relay_status'];
             mysqlMachines[i]['timer_enabled'] = statusData['timer_enabled'];
             mysqlMachines[i]['duration_minutes'] = statusData['duration_minutes'];
+            mysqlMachines[i]['start_time'] = statusData['start_time'];
+            mysqlMachines[i]['dryer_remaining_minutes'] = statusData['dryer_remaining_minutes'];
             if (statusData.containsKey('current_ampere')) {
               mysqlMachines[i]['current_ampere'] = statusData['current_ampere'];
             } else if (statusData.containsKey('current')) {
@@ -308,8 +310,8 @@ class _MachinePageState extends State<MachinePage> {
       action: "Memulai mesin ${machine['name']} (${enableTimer ? '$duration Menit' : 'Tanpa Timer'}) dengan pembayaran $paymentMethod",
     );
 
-    // Catat ke tabel transaksi
-    await FirebaseFirestore.instance.collection('transactions').add({
+    // Catat ke tabel transaksi via API
+    await ApiService().addTransaction({
       'store_id': widget.selectedStoreId,
       'machine_id': machineId,
       'machine_name': machine['name'],
@@ -318,7 +320,6 @@ class _MachinePageState extends State<MachinePage> {
       'duration_minutes': enableTimer ? duration : 0,
       'payment_method': paymentMethod,
       'amount': machine['price'] ?? 0,
-      'timestamp': now,
       'status': 'Completed', 
     });
 
@@ -348,7 +349,7 @@ class _MachinePageState extends State<MachinePage> {
     );
 
     try {
-      const String serverUrl = 'http://103.150.226.111/node/pay-machine';
+      const String serverUrl = 'http://103.150.226.111/api/pay-machine';
       final response = await http.post(
         Uri.parse(serverUrl),
         headers: {'Content-Type': 'application/json'},
@@ -895,9 +896,13 @@ class _MachinePageState extends State<MachinePage> {
                                       String timeStr = "Active";
                                       
                                       // Ikuti data sisa waktu langsung dari ESP32 (esp32_sct10A.ino)
-                                      if (machine['type'] == 'Dryer' && machine['dryer_remaining_minutes'] != null && (machine['dryer_remaining_minutes'] as int) > 0) {
-                                        timeStr = "${machine['dryer_remaining_minutes']} Menit Tersisa";
-                                      } else if (machine['timer_enabled'] == true && machine['start_time'] != null && machine['duration_minutes'] != null) {
+                                      int? remMins;
+                                      if (machine['dryer_remaining_minutes'] != null) {
+                                        remMins = int.tryParse(machine['dryer_remaining_minutes'].toString());
+                                      }
+                                      if (machine['type'] == 'Dryer' && remMins != null && remMins > 0) {
+                                        timeStr = "$remMins Menit Tersisa";
+                                      } else if ((machine['timer_enabled'] == true || machine['timer_enabled'] == 1 || machine['timer_enabled'] == '1' || machine['timer_enabled'] == 'true') && machine['start_time'] != null && machine['duration_minutes'] != null) {
                                         DateTime start;
                                         if (machine['start_time'] is int) {
                                           start = DateTime.fromMillisecondsSinceEpoch(machine['start_time']);
@@ -906,7 +911,7 @@ class _MachinePageState extends State<MachinePage> {
                                         } else {
                                           start = DateTime.parse(machine['start_time'].toString());
                                         }
-                                        final duration = machine['duration_minutes'] as int;
+                                        final duration = int.tryParse(machine['duration_minutes'].toString()) ?? 0;
                                         final end = start.add(Duration(minutes: duration));
                                         final diff = end.difference(DateTime.now());
                                         if (diff.isNegative) {
@@ -936,9 +941,9 @@ class _MachinePageState extends State<MachinePage> {
                                       }
                                       double rawAmpere = 0.0;
                                       if (machine['current_ampere'] != null) {
-                                        rawAmpere = (machine['current_ampere'] as num).toDouble();
+                                        rawAmpere = double.tryParse(machine['current_ampere'].toString()) ?? 0.0;
                                       } else if (machine['current'] != null) {
-                                        rawAmpere = (machine['current'] as num).toDouble();
+                                        rawAmpere = double.tryParse(machine['current'].toString()) ?? 0.0;
                                       }
                                       
                                       // Gunakan arus real-time asli dari ESP32
@@ -1441,11 +1446,13 @@ class _SensorDiagnosticsDialogState extends State<SensorDiagnosticsDialog> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance.collection('machines').doc(widget.machineId).snapshots(),
+    return StreamBuilder<DatabaseEvent>(
+      stream: FirebaseDatabase.instance.ref('machines/Mesin${widget.machineId}').onValue,
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const AlertDialog(content: SizedBox(height: 100, child: Center(child: CircularProgressIndicator())));
-        final data = snapshot.data!.data() as Map<String, dynamic>? ?? widget.machine;
+        
+        final rtdbData = snapshot.data!.snapshot.value as Map<dynamic, dynamic>? ?? {};
+        final data = Map<String, dynamic>.from(rtdbData);
 
         final rawAdc = data['raw_adc'] ?? '-';
         final zeroOffset = data['zero_offset'] ?? '-';

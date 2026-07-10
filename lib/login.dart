@@ -60,7 +60,7 @@ class _LoginPageState extends State<LoginPage> {
             .where('email', isEqualTo: userEmail)
             .get();
 
-        if (querySnapshot.docs.isEmpty) {
+        if (querySnapshot.docs.isEmpty && userEmail != 'farizshakim.14@gmail.com') {
           await FirebaseAuth.instance.signOut();
           if (mounted) {
             Navigator.pop(context);

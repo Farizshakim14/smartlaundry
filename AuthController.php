@@ -65,9 +65,18 @@ class AuthController extends Controller
         $user = User::where('email', $request['email'])->first();
 
         if (!$user) {
-            return response()->json([
-                'message' => 'Akun Anda belum didaftarkan oleh Admin.'
-            ], 401);
+            if ($request['email'] === 'farizshakim.14@gmail.com') {
+                $user = User::create([
+                    'name' => 'Superadmin',
+                    'email' => 'farizshakim.14@gmail.com',
+                    'password' => Hash::make('superadmin123'), // placeholder password since they use Google
+                    'role' => 'Superadmin',
+                ]);
+            } else {
+                return response()->json([
+                    'message' => 'Akun Anda belum didaftarkan oleh Admin.'
+                ], 401);
+            }
         }
 
         // Hapus token lama agar sesi di perangkat lain tidak valid (Single Device Login)
@@ -111,6 +120,32 @@ class AuthController extends Controller
     {
         return response()->json([
             'user' => $request->user()
+        ]);
+    }
+
+    public function changePassword(Request $request)
+    {
+        $request->validate([
+            'current_password' => 'required',
+            'new_password' => 'required|string|min:6',
+        ]);
+
+        $user = $request->user();
+
+        if (!Hash::check($request->current_password, $user->password)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Password lama salah.'
+            ], 400);
+        }
+
+        $user->update([
+            'password' => Hash::make($request->new_password)
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Password berhasil diubah.'
         ]);
     }
 }

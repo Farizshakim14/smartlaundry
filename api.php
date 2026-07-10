@@ -13,6 +13,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/profile', [AuthController::class, 'profile']);
     Route::post('/users/delete', [AuthController::class, 'deleteUser']);
+    Route::post('/change-password', [AuthController::class, 'changePassword']);
 
     // Machines
     Route::get('/machines', [App\Http\Controllers\MachineController::class, 'index']);

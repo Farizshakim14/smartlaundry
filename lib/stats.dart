@@ -93,7 +93,7 @@ class _StatsPageState extends State<StatsPage> {
 
     final machineTxs = await ApiService().getTransactions(storeId: storeIdParam);
     for (var tx in machineTxs) {
-      final int amount = (tx['cost'] ?? 0) as int;
+      final int amount = int.tryParse(tx['cost']?.toString() ?? '0') ?? 0;
       tempIncome += amount;
       DateTime? date = tx['created_at'] != null ? DateTime.tryParse(tx['created_at'].toString()) : null;
       String mName = (tx['machine'] != null && tx['machine']['name'] != null) ? tx['machine']['name'] : 'Mesin';
@@ -111,7 +111,7 @@ class _StatsPageState extends State<StatsPage> {
 
     final manualTxs = await ApiService().getManualTransactions(storeId: storeIdParam);
     for (var tx in manualTxs) {
-      final int amount = (tx['amount'] ?? 0) as int;
+      final int amount = int.tryParse(tx['amount']?.toString() ?? '0') ?? 0;
       final bool isIncome = tx['type'] == 'income';
       if (isIncome) tempIncome += amount; else tempExpense += amount;
       DateTime? date = tx['timestamp'] != null ? DateTime.tryParse(tx['timestamp'].toString()) : null;
@@ -165,6 +165,93 @@ class _StatsPageState extends State<StatsPage> {
         });
       }
     } catch (e) {}
+
+    // Tambahan: Ambil transaksi dari Firestore 'transactions' (seperti start mesin manual oleh owner/kasir)
+    try {
+      Query firestoreTxQ = FirebaseFirestore.instance.collection('transactions').where('status', isEqualTo: 'Completed');
+      if (_selectedFilterStoreId != null) {
+        firestoreTxQ = firestoreTxQ.where('store_id', isEqualTo: _selectedFilterStoreId);
+      } else {
+        List<String> myStoreIds = widget.myStores.map((s) => s['id'] as String).toList();
+        if (myStoreIds.isEmpty) {
+          firestoreTxQ = firestoreTxQ.where('store_id', isEqualTo: 'TIDAK_ADA');
+        } else {
+          if (myStoreIds.length > 10) myStoreIds = myStoreIds.sublist(0, 10);
+          firestoreTxQ = firestoreTxQ.where('store_id', whereIn: myStoreIds);
+        }
+      }
+
+      final fTxSnap = await firestoreTxQ.get();
+      for (var doc in fTxSnap.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final int price = int.tryParse(data['amount']?.toString() ?? '0') ?? 0;
+        
+        // Manual start mesin oleh kasir/owner adalah pemasukan karena token sudah dipotong
+        tempIncome += price;
+
+        DateTime? date;
+        if (data['timestamp'] != null) {
+          if (data['timestamp'] is Timestamp) {
+            date = (data['timestamp'] as Timestamp).toDate();
+          } else {
+            date = DateTime.tryParse(data['timestamp'].toString());
+          }
+        }
+        
+        String mName = data['machine_name'] ?? 'Mesin';
+        tempTransactions.add({
+          'title': "Manual Start - $mName",
+          'date': date,
+          'amountStr': "+ Rp ${_formatRupiahPositive(price)}",
+          'rawAmount': price,
+          'isIncome': true,
+          'isManual': false,
+          'timestamp': date,
+        });
+      }
+    } catch (e) {
+      debugPrint("Error fetching firestore transactions: $e");
+    }
+
+    // Tambahan: Ambil transaksi dari Mode Pelanggan (service_requests)
+    try {
+      Query serviceQ = FirebaseFirestore.instance.collection('service_requests').where('status', isEqualTo: 'Paid');
+      if (_selectedFilterStoreId != null) {
+        serviceQ = serviceQ.where('store_id', isEqualTo: _selectedFilterStoreId);
+      } else {
+        List<String> myStoreIds = widget.myStores.map((s) => s['id'] as String).toList();
+        if (myStoreIds.isEmpty) {
+          serviceQ = serviceQ.where('store_id', isEqualTo: 'TIDAK_ADA');
+        } else {
+          if (myStoreIds.length > 10) myStoreIds = myStoreIds.sublist(0, 10);
+          serviceQ = serviceQ.where('store_id', whereIn: myStoreIds);
+        }
+      }
+      
+      final serviceSnap = await serviceQ.get();
+      for (var doc in serviceSnap.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final int price = data['price'] ?? 0;
+        
+        // Pembayaran pelanggan selalu menjadi Pemasukan bagi toko
+        tempIncome += price;
+        
+        DateTime? date = data['created_at'] != null ? (data['created_at'] as Timestamp).toDate() : null;
+        String typeDesc = data['service_type'] ?? 'Layanan Pelanggan';
+        String customerName = data['customer_name'] ?? 'Pelanggan';
+        tempTransactions.add({
+          'title': "Pelanggan - $customerName ($typeDesc)",
+          'date': date,
+          'amountStr': "+ Rp ${_formatRupiahPositive(price)}",
+          'rawAmount': price,
+          'isIncome': true, // Pemasukan!
+          'isManual': false,
+          'timestamp': date,
+        });
+      }
+    } catch (e) {
+      debugPrint("Error fetching service requests: $e");
+    }
 
     tempTransactions.sort((a, b) {
       final timeA = a['timestamp'] as DateTime?;

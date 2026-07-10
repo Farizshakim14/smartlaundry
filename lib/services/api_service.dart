@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class ApiService {
   // Gunakan 10.0.2.2 jika menggunakan Emulator Android
   // Gunakan IP lokal komputer (contoh: 192.168.1.5) jika menggunakan HP fisik
-  static const String baseUrl = 'http://103.150.226.111/api'; 
+  static const String baseUrl = 'https://smartlaundry.duckdns.org/api'; 
 
   // Singleton pattern
   static final ApiService _instance = ApiService._internal();
@@ -513,5 +513,287 @@ class ApiService {
     } catch (e) {
       return false;
     }
+  }
+
+  // --- STORES ---
+
+  Future<List<Map<String, dynamic>>> getStores() async {
+    final token = await getToken();
+    if (token == null) return [];
+
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/stores'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final List<dynamic> stores = data['stores'] ?? [];
+        return stores.map((e) => e as Map<String, dynamic>).toList();
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>> addStore(Map<String, dynamic> storeData) async {
+    final token = await getToken();
+    if (token == null) return {'success': false, 'message': 'No token'};
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/stores'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode(storeData),
+      );
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        return {'success': true, 'store': data['store']};
+      } else {
+        return {'success': false, 'message': data['message'] ?? 'Failed to add store'};
+      }
+    } catch (e) {
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  Future<Map<String, dynamic>> updateStore(String storeId, Map<String, dynamic> storeData) async {
+    final token = await getToken();
+    if (token == null) return {'success': false, 'message': 'No token'};
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/stores/$storeId'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode(storeData),
+      );
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        return {'success': true, 'message': data['message'] ?? 'Updated'};
+      } else {
+        return {'success': false, 'message': data['message'] ?? 'Failed to update store'};
+      }
+    } catch (e) {
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  Future<bool> deleteStore(String storeId) async {
+    final token = await getToken();
+    if (token == null) return false;
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/stores/$storeId'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // --- USERS ---
+
+  Future<List<Map<String, dynamic>>> getUsers({String? role, String? storeId}) async {
+    final token = await getToken();
+    if (token == null) return [];
+
+    try {
+      String url = '$baseUrl/users?';
+      if (role != null) url += 'role=$role&';
+      if (storeId != null) url += 'store_id=$storeId';
+
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final List<dynamic> users = data['users'] ?? [];
+        return users.map((e) => e as Map<String, dynamic>).toList();
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>> addUser(Map<String, dynamic> userData) async {
+    final token = await getToken();
+    if (token == null) return {'success': false, 'message': 'No token'};
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/users'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode(userData),
+      );
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        return {'success': true, 'user': data['user']};
+      } else {
+        return {'success': false, 'message': data['message'] ?? 'Failed to add user'};
+      }
+    } catch (e) {
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  Future<bool> deleteUserById(String id) async {
+    final token = await getToken();
+    if (token == null) return false;
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/users/$id'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<Map<String, dynamic>> updateUser(String userId, Map<String, dynamic> userData) async {
+    final token = await getToken();
+    if (token == null) return {'success': false, 'message': 'No token'};
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/users/$userId'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode(userData),
+      );
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        return {'success': true, 'message': data['message'] ?? 'Updated'};
+      } else {
+        return {'success': false, 'message': data['message'] ?? 'Failed to update user'};
+      }
+    } catch (e) {
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  // ==========================================
+  // CUSTOMER, QUEUE, TRANSACTION, SERVICE REQ
+  // ==========================================
+
+  Future<List<Map<String, dynamic>>> getCustomers(String storeId) async {
+    final token = await getToken();
+    if (token == null) return [];
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/customers?store_id=$storeId'),
+        headers: {'Accept': 'application/json', 'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return List<Map<String, dynamic>>.from(data['customers']);
+      }
+    } catch (e) {
+      print("Error fetching customers: $e");
+    }
+    return [];
+  }
+
+  Future<Map<String, dynamic>> addCustomer(Map<String, dynamic> customerData) async {
+    final token = await getToken();
+    if (token == null) return {'success': false, 'message': 'No token'};
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/customers'),
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer $token'},
+        body: jsonEncode(customerData),
+      );
+      final data = jsonDecode(response.body);
+      return {'success': response.statusCode == 201 || response.statusCode == 200, 'customer': data['customer'] ?? {}};
+    } catch (e) {
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getQueues(String storeId, {String? status}) async {
+    final token = await getToken();
+    if (token == null) return [];
+    try {
+      String url = '$baseUrl/queues?store_id=$storeId';
+      if (status != null) url += '&status=$status';
+      
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'Accept': 'application/json', 'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return List<Map<String, dynamic>>.from(data['queues']);
+      }
+    } catch (e) {
+      print("Error fetching queues: $e");
+    }
+    return [];
+  }
+
+  Future<Map<String, dynamic>> addTransaction(Map<String, dynamic> transactionData) async {
+    final token = await getToken();
+    if (token == null) return {'success': false, 'message': 'No token'};
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/transactions'),
+        headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Bearer $token'},
+        body: jsonEncode(transactionData),
+      );
+      return {'success': response.statusCode == 201};
+    } catch (e) {
+      return {'success': false, 'message': e.toString()};
+    }
+  }
+
+  Future<Map<String, dynamic>?> getServiceRequestStatus(String orderId) async {
+    final token = await getToken();
+    if (token == null) return null;
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/service-requests/$orderId'),
+        headers: {'Accept': 'application/json', 'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['data'];
+      }
+    } catch (e) {
+      print("Error checking service request: $e");
+    }
+    return null;
   }
 }

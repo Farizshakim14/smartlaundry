@@ -302,7 +302,7 @@ class _TokenManagementPageState extends State<TokenManagementPage> with SingleTi
         // PENTING: Ganti IP 192.168.x.x dengan IP komputer/server Node.js Anda
         // Jika menggunakan HP fisik, pastikan 1 jaringan WiFi dengan PC dan gunakan IPv4 PC (contoh 192.168.1.10).
         // Jika pakai emulator Android, bisa coba 10.0.2.2
-        const String serverUrl = 'http://103.150.226.111/node/pay';
+        const String serverUrl = 'http://103.150.226.111/api/pay-token';
         
         final response = await http.post(
           Uri.parse(serverUrl),

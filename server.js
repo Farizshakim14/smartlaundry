@@ -167,13 +167,13 @@ app.get('/proxy-qr', async (req, res) => {
     try {
         const qrUrl = req.query.url;
         if (!qrUrl) return res.status(400).send('No URL provided');
-        
+
         const response = await fetch(qrUrl);
         if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
-        
+
         const arrayBuffer = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
-        
+
         // Teruskan header content-type dari Midtrans (biasanya image/png)
         res.setHeader('Content-Type', response.headers.get('content-type') || 'image/png');
         res.setHeader('Access-Control-Allow-Origin', '*');
@@ -235,6 +235,53 @@ app.post('/pay', async (req, res) => {
 // ==========================================
 // API PEMBAYARAN SERVICE (QUEUE SYSTEM)
 // ==========================================
+
+app.post('/pay-machine', async (req, res) => {
+    try {
+        const { price, store_id, machine_id, machine_name, machine_type, timer_enabled, duration_minutes, batch_id } = req.body;
+        console.log("💰 Request masuk untuk Pay Machine:", machine_name, price);
+
+        const orderId = 'MAC-' + Date.now();
+
+        const parameter = {
+            transaction_details: {
+                order_id: orderId,
+                gross_amount: price,
+            },
+            customer_details: {
+                first_name: store_id,
+            }
+        };
+
+        const transaction = await snap.createTransaction(parameter);
+        const redirectUrl = transaction.redirect_url;
+
+        // Simpan request ke Firebase sebagai Pending
+        await db.collection('machine_requests').doc(orderId).set({
+            store_id: store_id,
+            machine_id: machine_id,
+            machine_name: machine_name,
+            machine_type: machine_type,
+            timer_enabled: timer_enabled,
+            duration_minutes: duration_minutes,
+            batch_id: batch_id || null,
+            price: price,
+            method: 'Midtrans Snap',
+            status: 'Pending',
+            created_at: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        res.json({
+            token: transaction.token,
+            redirect_url: redirectUrl,
+            order_id: orderId
+        });
+    } catch (err) {
+        console.log("❌ ERROR pay-machine:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ==========================================
 // API HAPUS USER (FIREBASE AUTHENTICATION)
 // ==========================================
@@ -685,7 +732,7 @@ app.post('/api/esp32/data', async (req, res) => {
 
     const getDocIdByEspId = async (deviceId, relayChannel) => {
         if (!deviceId || !relayChannel) return null;
-        
+
         const cacheKey = `${deviceId}_${relayChannel}`;
         if (global.machineIdCache[cacheKey]) return global.machineIdCache[cacheKey];
 
@@ -708,10 +755,10 @@ app.post('/api/esp32/data', async (req, res) => {
     const shouldUpdateFirebase = (docId, relayStatus, currentAmpere) => {
         const now = Date.now();
         const last = global.lastMachineUpdate[docId] || { time: 0, relay: null, ampere: 0 };
-        
+
         // Selalu update jika status mesin (ON/OFF) berubah
         if (last.relay !== relayStatus) return true;
-        
+
         // Update jika ampere berubah drastis (>0.5A)
         if (Math.abs(last.ampere - currentAmpere) > 0.5) return true;
 
@@ -737,7 +784,7 @@ app.post('/api/esp32/data', async (req, res) => {
                 if (last.time > 0 && last.time < now) {
                     dtHours = (now - last.time) / 3600000;
                 }
-                
+
                 // Kalkulasi delta energy (kWh)
                 const currentAmpere = channelData.current || 0;
                 const energyKwhDelta = (currentAmpere * 220 * dtHours) / 1000;

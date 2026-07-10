@@ -1,6 +1,5 @@
 import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -27,21 +26,24 @@ class _UserManagementPageState extends State<UserManagementPage> {
   }
 
   Future<void> _fetchMyStores() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      Query q = FirebaseFirestore.instance.collection('stores');
-      if (widget.currentRole == 'Owner') {
-        q = q.where('owner_email', isEqualTo: user.email);
+    try {
+      final stores = await ApiService().getStores();
+      if (mounted) {
+        setState(() {
+          _myStores = stores.map((d) => {
+            'id': d['id'].toString(),
+            'name': d['name']?.toString() ?? 'Unnamed Store'
+          }).toList();
+          _isLoadingStores = false;
+        });
       }
-      final snap = await q.get();
-      _myStores = snap.docs.map((d) => {
-        'id': d.id,
-        'name': (d.data() as Map<String, dynamic>)['name']?.toString() ?? 'Unnamed Store'
-      }).toList();
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingStores = false;
+        });
+      }
     }
-    setState(() {
-      _isLoadingStores = false;
-    });
   }
 
   List<String> _getAllowedRoles() {
@@ -87,11 +89,12 @@ class _UserManagementPageState extends State<UserManagementPage> {
           builder: (context) => const Center(child: CircularProgressIndicator()),
         );
 
-        final apiResult = await ApiService().registerUser({
+        final apiResult = await ApiService().addUser({
           "name": newUser["name"],
           "email": newUser["email"],
           "password": newUser["password"],
           "role": newUser["role"],
+          "store_id": newUser["store_id"],
         });
 
         if (mounted) {
@@ -99,11 +102,8 @@ class _UserManagementPageState extends State<UserManagementPage> {
         }
 
         if (apiResult['success']) {
-          // Hapus password sebelum simpan ke Firestore
-          final firestoreData = Map<String, dynamic>.from(newUser)..remove('password');
-          await FirebaseFirestore.instance.collection('users').add(firestoreData);
-          
           if (mounted) {
+            setState(() {}); // Refresh list
             CustomSnackbar.show(context, 
               SnackBar(
                 content: Text('${newUser["name"]} berhasil ditambahkan sebagai ${newUser["role"]}!'),
@@ -153,55 +153,30 @@ class _UserManagementPageState extends State<UserManagementPage> {
               );
 
               try {
-                // 1. Hapus akun dari API Backend Laravel
-                try {
-                  final apiResult = await ApiService().deleteUser(email);
-                  print("Backend deletion response: ${apiResult}");
-                } catch (e) {
-                  print("Warning: Gagal menghapus user di Backend: $e");
-                }
-
-                // 2. Cascade Delete jika Owner
-                if (role == 'Owner' && email.isNotEmpty) {
-                  final storesSnap = await FirebaseFirestore.instance.collection('stores').where('owner_email', isEqualTo: email).get();
-                  
-                  for (var storeDoc in storesSnap.docs) {
-                    final storeId = storeDoc.id;
-                    final batch = FirebaseFirestore.instance.batch();
-                    
-                    // Hapus mesin
-                    final machines = await FirebaseFirestore.instance.collection('machines').where('store_id', isEqualTo: storeId).get();
-                    for (var doc in machines.docs) { batch.delete(doc.reference); }
-                    
-                    // Hapus pelanggan
-                    final pelanggan = await FirebaseFirestore.instance.collection('pelanggan').where('store_id', isEqualTo: storeId).get();
-                    for (var doc in pelanggan.docs) { batch.delete(doc.reference); }
-                    
-                    // Hapus cashier (selain owner ini)
-                    final cashiers = await FirebaseFirestore.instance.collection('users').where('store_id', isEqualTo: storeId).get();
-                    for (var doc in cashiers.docs) { batch.delete(doc.reference); }
-                    
-                    // Hapus tokonya
-                    batch.delete(storeDoc.reference);
-                    
-                    await batch.commit();
-                  }
-                }
-
-                // 3. Terakhir hapus profil user-nya dari koleksi 'users'
-                await FirebaseFirestore.instance.collection('users').doc(docId).delete();
+                // Hapus akun dari API Backend Laravel
+                final success = await ApiService().deleteUserById(docId);
                 
                 if (mounted) {
                   Navigator.pop(context); // Tutup loading dialog
-                  CustomSnackbar.show(context, 
-                    SnackBar(content: Text('Akun $name berhasil dihapus secara bersih'), backgroundColor: Colors.green),
-                  );
+                }
+                
+                if (success) {
+                  if (mounted) {
+                    setState(() {}); // Refresh list
+                    CustomSnackbar.show(context, 
+                      SnackBar(content: Text('Akun $name berhasil dihapus'), backgroundColor: Colors.green),
+                    );
+                  }
+                } else {
+                  if (mounted) {
+                    CustomSnackbar.show(context, SnackBar(content: Text('Gagal menghapus di server'), backgroundColor: Colors.red));
+                  }
                 }
               } catch (e) {
                 if (mounted) {
                   Navigator.pop(context); // Tutup loading dialog
                   CustomSnackbar.show(context, 
-                    SnackBar(content: Text('Gagal menghapus: $e'), backgroundColor: Colors.red),
+                    SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
                   );
                 }
               }
@@ -230,13 +205,13 @@ class _UserManagementPageState extends State<UserManagementPage> {
       ),
       body: _isLoadingStores
         ? const Center(child: CircularProgressIndicator())
-        : StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('users').snapshots(),
+        : FutureBuilder<List<Map<String, dynamic>>>(
+        future: ApiService().getUsers(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          if (!snapshot.hasData || snapshot.data!.isEmpty) {
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -252,13 +227,12 @@ class _UserManagementPageState extends State<UserManagementPage> {
             );
           }
 
-          final users = snapshot.data!.docs.where((doc) {
-            final data = doc.data() as Map<String, dynamic>;
+          final users = snapshot.data!.where((data) {
             if (widget.currentRole == 'Superadmin' || widget.currentRole == 'Admin') return true;
             
             // For Owner, show themselves or their cashiers
             if (data['email'] == FirebaseAuth.instance.currentUser?.email) return true;
-            if (data['role'] == 'Cashier' && _myStores.any((s) => s['id'] == data['store_id'])) return true;
+            if (data['role'] == 'Cashier' && _myStores.any((s) => s['id'] == data['store_id']?.toString())) return true;
             
             return false;
           }).toList();
@@ -283,8 +257,8 @@ class _UserManagementPageState extends State<UserManagementPage> {
             padding: const EdgeInsets.all(24),
             itemCount: users.length,
             itemBuilder: (context, index) {
-              final doc = users[index];
-              final user = doc.data() as Map<String, dynamic>;
+              final user = users[index];
+              final docId = user['id']?.toString() ?? '';
               
               final name = user['name']?.toString() ?? 'Unknown User';
               final email = user['email']?.toString() ?? 'No Email';
@@ -405,7 +379,7 @@ class _UserManagementPageState extends State<UserManagementPage> {
                     if (canAddUser)
                       IconButton(
                         icon: const Icon(Icons.delete_outline, color: Colors.red),
-                        onPressed: () => _confirmDeleteUser(doc.id, name, email, role),
+                        onPressed: () => _confirmDeleteUser(docId, name, email, role),
                       ),
                   ],
                 ),

@@ -1,8 +1,8 @@
 import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:aplikasilaundry/activity_service.dart';
+import 'package:aplikasilaundry/services/api_service.dart';
 
 class StoreDetailPage extends StatefulWidget {
   final String storeId;
@@ -112,26 +112,31 @@ class _StoreDetailPageState extends State<StoreDetailPage> {
                         if (_formKey.currentState!.validate()) {
                           _formKey.currentState!.save();
                           try {
-                            // Assign Cashier to this Store
-                            await FirebaseFirestore.instance.collection('users').add({
+                            // Assign Cashier to this Store via API
+                            final userData = {
                               'name': name,
                               'email': email,
                               'role': 'Cashier',
+                              'password': 'password123', // Default password
                               'store_id': widget.storeId,
-                              'owner_email': FirebaseAuth.instance.currentUser?.email ?? '',
-                              'created_at': FieldValue.serverTimestamp(),
-                            });
+                            };
+                            final result = await ApiService().addUser(userData);
                             
-                            await ActivityService.logActivity(
-                              storeId: widget.storeId,
-                              action: "Menambahkan cashier baru ($name)",
-                            );
-                            
-                            if (mounted) {
-                              Navigator.pop(context);
-                              CustomSnackbar.show(context, 
-                                const SnackBar(content: Text('Cashier added successfully!'), backgroundColor: Color(0xFF10B981)),
+                            if (result['success']) {
+                              await ActivityService.logActivity(
+                                storeId: widget.storeId,
+                                action: "Menambahkan cashier baru ($name)",
                               );
+                              
+                              if (mounted) {
+                                Navigator.pop(context);
+                                setState(() {}); // Refresh list
+                                CustomSnackbar.show(context, 
+                                  const SnackBar(content: Text('Cashier added successfully!'), backgroundColor: Color(0xFF10B981)),
+                                );
+                              }
+                            } else {
+                              throw Exception(result['message']);
                             }
                           } catch (e) {
                             CustomSnackbar.show(context, 
@@ -168,13 +173,20 @@ class _StoreDetailPageState extends State<StoreDetailPage> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () async {
-              await FirebaseFirestore.instance.collection('users').doc(docId).delete();
-              await ActivityService.logActivity(
-                storeId: widget.storeId,
-                action: "Menghapus cashier",
-              );
-              if (mounted) {
-                Navigator.pop(context);
+              final success = await ApiService().deleteUserById(docId);
+              if (success) {
+                await ActivityService.logActivity(
+                  storeId: widget.storeId,
+                  action: "Menghapus cashier",
+                );
+                if (mounted) {
+                  Navigator.pop(context);
+                  setState(() {}); // Refresh list
+                }
+              } else {
+                if (mounted) {
+                  CustomSnackbar.show(context, const SnackBar(content: Text('Gagal menghapus cashier')));
+                }
               }
             },
             child: const Text("Remove", style: TextStyle(color: Colors.white)),
@@ -205,13 +217,13 @@ class _StoreDetailPageState extends State<StoreDetailPage> {
             ),
           ),
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('users').where('store_id', isEqualTo: widget.storeId).where('role', isEqualTo: 'Cashier').snapshots(),
+            child: FutureBuilder<List<Map<String, dynamic>>>(
+              future: ApiService().getUsers(role: 'Cashier', storeId: widget.storeId),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                if (!snapshot.hasData || snapshot.data!.isEmpty) {
                   return Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -224,14 +236,14 @@ class _StoreDetailPageState extends State<StoreDetailPage> {
                   );
                 }
 
-                final cashiers = snapshot.data!.docs;
+                final cashiers = snapshot.data!;
 
                 return ListView.builder(
                   padding: const EdgeInsets.all(24),
                   itemCount: cashiers.length,
                   itemBuilder: (context, index) {
-                    final doc = cashiers[index];
-                    final data = doc.data() as Map<String, dynamic>;
+                    final data = cashiers[index];
+                    final docId = data['id'].toString();
 
                     return Container(
                       margin: const EdgeInsets.only(bottom: 16),
@@ -293,7 +305,7 @@ class _StoreDetailPageState extends State<StoreDetailPage> {
                           ),
                           IconButton(
                             icon: const Icon(Icons.delete_outline, color: Colors.red),
-                            onPressed: () => _deleteCashier(doc.id),
+                            onPressed: () => _deleteCashier(docId),
                           ),
                         ],
                       ),

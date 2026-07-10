@@ -2,11 +2,11 @@ import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:aplikasilaundry/main.dart';
 import 'package:aplikasilaundry/editprofile.dart';
 import 'package:aplikasilaundry/change_password.dart';
 import 'package:aplikasilaundry/localization.dart';
+import 'package:aplikasilaundry/services/api_service.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -20,8 +20,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool isEmailVerified = false;
   bool isPhoneVerified = false;
   String? phoneNumber;
-
-  StreamSubscription<QuerySnapshot>? _userSubscription;
+  String? userId;
 
   @override
   void initState() {
@@ -31,11 +30,10 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   void dispose() {
-    _userSubscription?.cancel();
     super.dispose();
   }
 
-  void _checkVerificationStatus() {
+  void _checkVerificationStatus() async {
     user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
@@ -50,22 +48,20 @@ class _SettingsPageState extends State<SettingsPage> {
 
     bool hasPhoneProvider = user!.providerData.any((p) => p.providerId == 'phone');
 
-    _userSubscription?.cancel();
-    _userSubscription = FirebaseFirestore.instance
-        .collection('users')
-        .where('email', isEqualTo: user!.email)
-        .limit(1)
-        .snapshots()
-        .listen((doc) {
-      if (doc.docs.isNotEmpty) {
-        if (mounted) {
-          setState(() {
-            phoneNumber = doc.docs.first.data()['phone'];
-            isPhoneVerified = doc.docs.first.data()['phone_verified'] ?? hasPhoneProvider;
-          });
-        }
+    try {
+      final users = await ApiService().getUsers();
+      final userData = users.firstWhere((u) => u['email'] == user!.email, orElse: () => {});
+      
+      if (userData.isNotEmpty && mounted) {
+        setState(() {
+          userId = userData['id']?.toString();
+          phoneNumber = userData['phone']?.toString();
+          isPhoneVerified = (userData['phone_verified'] == true || userData['phone_verified'] == 1) || hasPhoneProvider;
+        });
       }
-    });
+    } catch (e) {
+      print("Error fetching user data: $e");
+    }
   }
 
   Future<void> _sendEmailVerification() async {
@@ -159,12 +155,14 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _markPhoneAsVerified() async {
-    final doc = await FirebaseFirestore.instance.collection('users').where('email', isEqualTo: user!.email).limit(1).get();
-    if (doc.docs.isNotEmpty) {
-      await FirebaseFirestore.instance.collection('users').doc(doc.docs.first.id).update({'phone_verified': true});
+    if (userId != null) {
+      await ApiService().updateUser(userId!, {'phone_verified': true});
     }
-    // Listener will automatically update the UI
+    
     if (mounted) {
+      setState(() {
+        isPhoneVerified = true;
+      });
       CustomSnackbar.show(context, const SnackBar(content: Text("Nomor HP berhasil diverifikasi!"), backgroundColor: Colors.green));
     }
   }
@@ -219,7 +217,7 @@ class _SettingsPageState extends State<SettingsPage> {
               icon: Icons.lock_outline,
               title: AppLocalizations.tr('change_password'),
               onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (context) => const ChangePasswordPage()));
+                Navigator.push(context, MaterialPageRoute(builder: (context) => const ChangePasswordPage(storeId: null)));
               },
             ),
 

@@ -2,9 +2,11 @@ import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:aplikasilaundry/services/api_service.dart';
 
 class ChangePasswordPage extends StatefulWidget {
-  const ChangePasswordPage({super.key});
+  final String? storeId;
+  const ChangePasswordPage({super.key, this.storeId});
 
   @override
   State<ChangePasswordPage> createState() => _ChangePasswordPageState();
@@ -29,25 +31,10 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
   bool _obscureOldPin = true;
   bool _obscureNewPin = true;
   bool _obscureConfirmPin = true;
-  
-  String? _userStoreId;
 
   @override
   void initState() {
     super.initState();
-    _fetchUserStoreId();
-  }
-
-  Future<void> _fetchUserStoreId() async {
-    User? user = FirebaseAuth.instance.currentUser;
-    if (user != null && user.email != null) {
-      final doc = await FirebaseFirestore.instance.collection('users').where('email', isEqualTo: user.email).limit(1).get();
-      if (doc.docs.isNotEmpty) {
-        setState(() {
-          _userStoreId = doc.docs.first.data()['store_id'];
-        });
-      }
-    }
   }
 
   Future<void> _changeAccountPassword() async {
@@ -67,6 +54,16 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
 
         await user.reauthenticateWithCredential(credential);
         await user.updatePassword(_newPasswordController.text);
+
+        // Update password on backend as well
+        try {
+          final res = await ApiService().changePassword(_oldPasswordController.text, _newPasswordController.text);
+          if (res['success'] != true) {
+            debugPrint("Failed to update password on Laravel backend: ${res['message']}");
+          }
+        } catch (e) {
+          debugPrint("Error updating password on backend: $e");
+        }
 
         if (mounted) {
           CustomSnackbar.show(context, 
@@ -97,7 +94,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
   Future<void> _changeCustomerModePin() async {
     if (!_formKeyPin.currentState!.validate()) return;
     
-    if (_userStoreId == null || _userStoreId!.isEmpty) {
+    if (widget.storeId == null || widget.storeId!.isEmpty) {
       CustomSnackbar.show(context, const SnackBar(content: Text("Anda belum memiliki cabang toko."), backgroundColor: Colors.orange));
       return;
     }
@@ -107,7 +104,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
     });
 
     try {
-      final storeRef = FirebaseFirestore.instance.collection('stores').doc(_userStoreId);
+      final storeRef = FirebaseFirestore.instance.collection('stores').doc(widget.storeId);
       final storeSnap = await storeRef.get();
       if (storeSnap.exists) {
         String currentPin = storeSnap.data()?['customer_mode_pin'] ?? '1234';

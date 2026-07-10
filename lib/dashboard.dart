@@ -149,20 +149,19 @@ class _DashboardPageState extends State<DashboardPage> {
         if (_userRole == 'Cashier') {
           _selectedStoreId = newStoreId;
           _myStores = [];
-          _storeSubscription?.cancel();
           if (mounted) {
             setState(() => _isLoading = false);
             if (roleChanged) _setupNotificationListener();
           }
         } else {
           // Fetch stores if role is Owner/Admin/Superadmin
-          _setupStoreListener();
+          _fetchStores();
         }
       } else {
         // Fallback jika tidak ada dokumen tapi email superadmin
         if (_userEmail == 'farizshakim.14@gmail.com') {
           _userRole = 'Superadmin';
-          _setupStoreListener();
+          _fetchStores();
         } else {
           if (mounted) setState(() => _isLoading = false);
         }
@@ -171,24 +170,19 @@ class _DashboardPageState extends State<DashboardPage> {
       debugPrint("Error listening to users collection: $error");
       if (mounted) {
         setState(() => _isLoading = false);
-        CustomSnackbar.show(context, SnackBar(content: Text("Gagal memuat profil: $error"), backgroundColor: Colors.red));
+        if (FirebaseAuth.instance.currentUser != null) {
+          CustomSnackbar.show(context, SnackBar(content: Text("Gagal memuat profil: $error"), backgroundColor: Colors.red));
+        }
       }
     });
   }
 
-  void _setupStoreListener() {
+  Future<void> _fetchStores() async {
     if (_userEmail == null) return;
 
-    Query storesQuery = FirebaseFirestore.instance.collection('stores');
-    if (_userRole == 'Owner' || (_userRole != 'Superadmin' && _userRole != 'Admin' && _userRole != 'Cashier')) {
-      storesQuery = storesQuery.where('owner_email', isEqualTo: _userEmail);
-    }
-
-    _storeSubscription?.cancel();
-    _storeSubscription = storesQuery.snapshots().listen((storesSnap) {
-      final newStores = storesSnap.docs
-          .map((d) => {'id': d.id, 'name': (d.data() as Map<String, dynamic>)['name']})
-          .toList();
+    try {
+      final stores = await ApiService().getStores();
+      final newStores = stores.map((d) => {'id': d['id'].toString(), 'name': d['name']?.toString() ?? 'Unknown'}).toList();
       
       if (_userRole == 'Superadmin' || _userRole == 'Admin') {
         newStores.insert(0, {'id': 'ALL', 'name': 'Semua Toko'});
@@ -209,13 +203,15 @@ class _DashboardPageState extends State<DashboardPage> {
         });
         _setupNotificationListener(); 
       }
-    }, onError: (error) {
-      debugPrint("Error listening to stores collection: $error");
+    } catch (error) {
+      debugPrint("Error fetching stores from API: $error");
       if (mounted) {
         setState(() => _isLoading = false);
-        CustomSnackbar.show(context, SnackBar(content: Text("Gagal memuat toko: $error"), backgroundColor: Colors.red));
+        if (FirebaseAuth.instance.currentUser != null) {
+          CustomSnackbar.show(context, SnackBar(content: Text("Gagal memuat toko: $error"), backgroundColor: Colors.red));
+        }
       }
-    });
+    }
   }
 
   void _setupNotificationListener() {
@@ -301,10 +297,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF4F7FA),
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: pages,
-      ),
+      body: pages[_selectedIndex],
       bottomNavigationBar: _buildBottomNav(),
     );
   }

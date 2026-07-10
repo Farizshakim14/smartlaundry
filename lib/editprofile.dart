@@ -1,7 +1,7 @@
-import 'package:aplikasilaundry/custom_snackbar.dart';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:aplikasilaundry/services/api_service.dart';
+import 'package:aplikasilaundry/custom_snackbar.dart';
 
 class EditProfilePage extends StatefulWidget {
   const EditProfilePage({super.key});
@@ -38,15 +38,11 @@ class _EditProfilePageState extends State<EditProfilePage> {
     }
 
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .where('email', isEqualTo: email)
-          .limit(1)
-          .get();
+      final users = await ApiService().getUsers();
+      final data = users.firstWhere((u) => u['email'] == email, orElse: () => {});
 
-      if (snapshot.docs.isNotEmpty) {
-        final data = snapshot.docs.first.data();
-        _docId = snapshot.docs.first.id;
+      if (data.isNotEmpty) {
+        _docId = data['id']?.toString();
         
         setState(() {
           _nameController.text = data['name']?.toString() ?? FirebaseAuth.instance.currentUser?.displayName ?? "";
@@ -83,18 +79,21 @@ class _EditProfilePageState extends State<EditProfilePage> {
         if (phone != _originalPhone) {
           updateData['phone_verified'] = false;
         }
-        await FirebaseFirestore.instance.collection('users').doc(_docId).update(updateData);
+        await ApiService().updateUser(_docId!, updateData);
       } else {
-        // Jika dokumen belum ada di users (misal superadmin yang login tanpa dibuatkan via user management)
-        final newDoc = await FirebaseFirestore.instance.collection('users').add({
+        // Jika dokumen belum ada (misal superadmin yang login tanpa dibuatkan via user management)
+        final newDocResult = await ApiService().addUser({
           'email': email,
           'role': email == 'farizshakim.14@gmail.com' ? 'Superadmin' : 'Owner',
+          'password': 'password123', // required by API
           'name': name,
           'phone': phone,
           'address': address,
           'phone_verified': false,
         });
-        _docId = newDoc.id;
+        if (newDocResult['success']) {
+          _docId = newDocResult['user']['id']?.toString();
+        }
       }
       
       // Update Firebase Auth profile

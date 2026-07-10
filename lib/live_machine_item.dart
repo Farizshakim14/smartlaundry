@@ -61,14 +61,15 @@ class _LiveMachineItemState extends State<LiveMachineItem> with SingleTickerProv
     if (rawStatus == 'Active') {
       // Smart Status based on Ampere
       if (currentAmpere < 0.5) {
-         status = "Selesai / Diam";
+         status = "Menunggu Dinyalakan";
          color = const Color(0xFFF59E0B); // Kuning
       } else {
          status = type == 'Washer' ? AppLocalizations.tr('washing') : AppLocalizations.tr('drying');
          color = type == 'Washer' ? const Color(0xFF2563EB) : const Color(0xFF10B981);
       }
       
-      final timerEnabled = data['timer_enabled'] == true;
+      final rawTimer = data['timer_enabled'];
+      final timerEnabled = rawTimer == true || rawTimer == 1 || rawTimer == '1' || rawTimer == 'true';
       if (timerEnabled && data['start_time'] != null && data['duration_minutes'] != null) {
          DateTime startTime;
          if (data['start_time'] is Timestamp) {
@@ -76,12 +77,12 @@ class _LiveMachineItemState extends State<LiveMachineItem> with SingleTickerProv
          } else if (data['start_time'] is String) {
            startTime = DateTime.tryParse(data['start_time'])?.toLocal() ?? DateTime.now();
          } else if (data['start_time'] is int || data['start_time'] is double) {
-           startTime = DateTime.fromMillisecondsSinceEpoch((data['start_time'] as num).toInt());
+           startTime = DateTime.fromMillisecondsSinceEpoch(int.tryParse(data['start_time'].toString()) ?? 0);
          } else {
            startTime = DateTime.now();
          }
          
-         final durationMins = (data['duration_minutes'] as num).toInt();
+         final durationMins = int.tryParse(data['duration_minutes'].toString()) ?? 0;
          final endTime = startTime.add(Duration(minutes: durationMins));
          final now = DateTime.now();
          
@@ -93,7 +94,7 @@ class _LiveMachineItemState extends State<LiveMachineItem> with SingleTickerProv
            
            if (type == 'Dryer' && data['dryer_remaining_minutes'] != null) {
                // Gunakan data real dari ESP32 untuk Dryer
-               int remMins = (data['dryer_remaining_minutes'] as num).toInt();
+               int remMins = int.tryParse(data['dryer_remaining_minutes'].toString()) ?? 0;
                timeLeft = "${remMins}m 0s";
                progress = ((durationMins - remMins) / durationMins).clamp(0.0, 1.0);
            } else {
